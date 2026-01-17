@@ -1,0 +1,88 @@
+flowchart LR
+ subgraph PM_Group["Project Management Agent"]
+    direction TB
+        GitHub["GitHub"]
+        Webhook["Webhook Listener"]
+        TaskQueue["Task Queue<br>Prioritised"]
+        PMAgent["Project Management<br>Agent"]
+        GitHubMCP["GitHub MCP"]
+  end
+ subgraph QE_Lead_Group["QE Lead Agent"]
+    direction TB
+        Human1["Human Elicitation"]
+        QELead["Quality Engineer<br>Lead Agent"]
+        Memory1["Long Term<br>Memory"]
+  end
+ subgraph QE_Agent_Group["QE Agent"]
+    direction TB
+        Human2["Human Elicitation"]
+        QEAgent["Quality Engineer<br>Agent"]
+        IsoEnv1["Isolated<br>Execution<br>Environment"]
+        ErrorHandler1["Error Handler"]
+  end
+ subgraph Prompt_Eng_Group["Prompt Engineer Agent"]
+    direction TB
+        Memory2["Long Term<br>Memory"]
+        PromptAgent["Prompt<br>Generator<br>Agent"]
+  end
+ subgraph Async_Coding_Group["Async Coding Agent"]
+    direction TB
+        Human3["Human Elicitation"]
+        DevAgent["Developer Agent"]
+        IsoEnv2["Isolated<br>Execution<br>Environment"]
+        ErrorHandler2["Error Handler"]
+  end
+ subgraph Peer_Review_Group["Peer Review Agent"]
+        PeerAgent["Peer Review<br>Agent"]
+  end
+    GitHub -- Webhooks --> Webhook
+    Webhook -- Events --> TaskQueue
+    TaskQueue -- Features --> PMAgent
+    PMAgent <-- Queries &amp;<br>Status --> GitHubMCP
+    GitHubMCP <-- Issues/PRs --> GitHub
+    Human1 -- TLDR<br>Strategy Feedback --> QELead
+    QELead <-- Retrieve<br>+ Store --> Memory1
+    Human2 -- Errors<br>Feedback --> QEAgent
+    QEAgent -- Generated Tests --> IsoEnv1
+    IsoEnv1 -- Test Execution Errors --> ErrorHandler1
+    ErrorHandler1 -- Feedback --> QEAgent
+    Memory2 <-- Retrieve + Store --> PromptAgent
+    Human3 -- Errors<br>Feedback --> DevAgent
+    DevAgent -- Generated Code --> IsoEnv2
+    IsoEnv2 -- Test / Code<br>Execution Errors --> ErrorHandler2
+    ErrorHandler2 -- Feedback --> DevAgent
+    PMAgent -- Stories --> QELead
+    QELead -- QE Tasks --> QEAgent
+    QEAgent <-- Retrieve<br>+ Store --> Memory1
+    IsoEnv1 -- Valid Tests --> PromptAgent
+    PromptAgent -- Coding Tasks --> DevAgent
+    IsoEnv2 -- Valid Code --> PeerAgent
+    PeerAgent -- Feedback --> DevAgent
+    PeerAgent -- PRs --> GitHubMCP
+
+     GitHub:::grey
+     Webhook:::white
+     TaskQueue:::white
+     PMAgent:::yellow
+     GitHubMCP:::orange
+     Human1:::red
+     QELead:::yellow
+     Memory1:::green
+     Human2:::red
+     QEAgent:::yellow
+     IsoEnv1:::blue
+     ErrorHandler1:::white
+     Memory2:::green
+     PromptAgent:::yellow
+     Human3:::red
+     DevAgent:::yellow
+     IsoEnv2:::blue
+     ErrorHandler2:::white
+     PeerAgent:::yellow
+    classDef yellow fill:#fff2cc,stroke:#d6b656,stroke-width:2px
+    classDef red fill:#f4cccc,stroke:#b04c4c,stroke-width:2px
+    classDef green fill:#d9ead3,stroke:#6aa84f,stroke-width:2px
+    classDef blue fill:#c9daf8,stroke:#6d9eeb,stroke-width:2px
+    classDef orange fill:#fce5cd,stroke:#e69138,stroke-width:2px
+    classDef grey fill:#f3f3f3,stroke:#666,stroke-width:2px
+    classDef white fill:#ffffff,stroke:#333,stroke-width:2px
