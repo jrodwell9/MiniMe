@@ -1,8 +1,20 @@
 repos:
--   repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v3.2.0
+  - repo: local
     hooks:
-    -   id: trailing-whitespace
-    -   id: end-of-file-fixer
-    -   id: check-yaml
-    -   id: check-added-large-files
+      # Add ty hook
+      - id: ty-hook
+        name: Type Checking
+        description: This hook runs type checking
+        entry: ty
+        language: python
+        types: [python]
+        args: ["check"]
+
+      # Add ruff hook
+      - id: ruff-hook
+        name: Ruff Linting
+        description: This hook runs linting with Ruff
+        entry: ruff
+        language: python
+        types: [python]
+        args: ["check", "--fix"]
