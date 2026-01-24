@@ -1,0 +1,20 @@
+repos:
+  - repo: local
+    hooks:
+      # Add ty hook
+      - id: ty-hook
+        name: Type Checking
+        description: This hook runs type checking
+        entry: ty
+        language: python
+        types: [python]
+        args: ["check"]
+
+      # Add ruff hook
+      - id: ruff-hook
+        name: Ruff Linting
+        description: This hook runs linting with Ruff
+        entry: ruff
+        language: python
+        types: [python]
+        args: ["check", "--fix"]
