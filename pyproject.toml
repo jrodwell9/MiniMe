@@ -4,11 +4,26 @@ version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "requests>=2.31.0",
+    "arxiv>=2.1.0",
+    "google-auth-oauthlib>=1.2.0",
+    "google-auth-httplib2>=0.2.0",
+    "google-api-python-client>=2.100.0",
+]
+
+[tool.pyrefly]
+project-includes = [
+    "**/*.py*",
+    "**/*.ipynb",
+    "scripts/**/*.py",
+]
 
 [dependency-groups]
 dev = [
     "pre-commit>=4.5.1",
+    "pyrefly>=1.2.0",
+    "pytest>=9.1.1",
     "ruff>=0.14.13",
     "ty>=0.0.12",
 ]

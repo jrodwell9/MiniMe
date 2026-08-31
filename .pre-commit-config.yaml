@@ -5,16 +5,16 @@ repos:
       - id: ty-hook
         name: Type Checking
         description: This hook runs type checking
-        entry: ty
-        language: python
+        entry: bash -c 'git ls-files -z "*.py" | xargs -0 uvx pyrefly check --summarize-errors'
+        language: system
         types: [python]
-        args: ["check"]
+        pass_filenames: false
 
       # Add ruff hook
       - id: ruff-hook
         name: Ruff Linting
         description: This hook runs linting with Ruff
-        entry: ruff
-        language: python
+        entry: uvx ruff
+        language: system
         types: [python]
         args: ["check", "--fix"]
