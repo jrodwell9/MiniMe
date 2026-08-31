@@ -61,7 +61,9 @@ class ArxivScraper:
                     "arxiv_url": result.entry_id,
                     "categories": result.categories,
                     "primary_category": result.primary_category,
-                    "updated": result.updated.strftime("%Y-%m-%dT%H:%M:%SZ") if result.updated else None,
+                    "updated": result.updated.strftime("%Y-%m-%dT%H:%M:%SZ")
+                    if result.updated
+                    else None,
                 }
                 self.papers.append(paper)
 

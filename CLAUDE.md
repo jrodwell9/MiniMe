@@ -83,10 +83,16 @@ Context Budgeting: When checking test outputs, always use targeted flags (pytest
 
 ## 4. Running the WikiSkill Harness
 
-To run the `wikiskill_harness.py` script, use the `uv run` command with the `--post-session` argument.
+To run the `wikiskill_harness.py` script, use the `uv run` command with the `--post-session` argument:
 
 ```bash
 uv run scripts/wikiskill_harness.py --post-session
 ```
 
-For local testing, the harness is configured to use a mock SQLite database for session trajectories. This database is automatically created at `~/.claude-code-router/logs.db` if it does not already exist, and it's populated with sample session data. This allows for easy local development and testing without needing a live CCR instance.
+You can optionally specify `--since <ISO-timestamp>` to filter for sessions modified since that timestamp:
+
+```bash
+uv run scripts/wikiskill_harness.py --post-session --since "2026-08-31T12:00:00Z"
+```
+
+The harness automatically discovers and parses the latest Claude Code session JSONL transcript from `~/.claude/projects/<project-dir>/`. If no local session files exist or when running tests, it falls back to mock mode.

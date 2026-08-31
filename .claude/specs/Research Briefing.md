@@ -126,21 +126,30 @@ Data Contract (schemas.py):
 from pydantic import BaseModel, Field
 from typing import List
 
+
 class NewsItem(BaseModel):
     title: str
     url: str
     category: str = Field(description="e.g., Commercial, Litigation Tech, Regulatory")
     gist: str = Field(description="1-2 sentence core factual summary.")
-    legal_impact: str = Field(description="Actionable takeaway for legal practitioners.")
-    entities: List[str] = Field(description="Key companies, models, or platforms for wikilinking.")
+    legal_impact: str = Field(
+        description="Actionable takeaway for legal practitioners."
+    )
+    entities: List[str] = Field(
+        description="Key companies, models, or platforms for wikilinking."
+    )
+
 
 class PaperItem(BaseModel):
     title: str
     url: str
     authors: List[str]
-    core_contribution: str = Field(description="Methodological advance or benchmark result.")
+    core_contribution: str = Field(
+        description="Methodological advance or benchmark result."
+    )
     practical_takeaway: str = Field(description="Relevance to NLP or applied legal AI.")
     tags: List[str] = Field(description="Lower-case tags without hash symbol.")
+
 
 class DailyBriefingData(BaseModel):
     date: str

@@ -1,7 +1,7 @@
 import os
 from typing import Any
 
-from .wikiskill_dataclasses import SessionTrajectory
+from MiniMe.scripts.wikiskill_dataclasses import SessionTrajectory
 
 
 class WikiManager:
@@ -45,21 +45,16 @@ class WikiManager:
 
     def update_index(self, additions: list[str]):
         current_content = self._read_file(self.index_path) or ""
-        # Remove trailing newline if it exists, so we can consistently add one before new entries
         if current_content.endswith("\n"):
             current_content = current_content.rstrip("\n")
 
         updated_lines = current_content.splitlines()
 
         for addition in additions:
-            if (
-                addition not in updated_lines
-            ):  # Check if the addition (line) already exists
+            if addition not in updated_lines:
                 updated_lines.append(addition)
 
-        new_content = (
-            "\n".join(updated_lines) + "\n"
-        )  # Add a single trailing newline at the end
+        new_content = "\n".join(updated_lines) + "\n"
         self._write_file(self.index_path, new_content)
         print(f"Updated wiki index: {self.index_path}")
 
@@ -80,16 +75,159 @@ class WikiManager:
     def call_llm_for_wiki_update(
         self, trajectory: SessionTrajectory, wiki_context: str
     ) -> dict[str, Any]:
-        # This is a placeholder for the LLM interaction.
-        # In a real scenario, this would involve making an API call to an LLM.
-        # The LLM would analyze the trajectory and wiki_context to propose updates.
-        print(
-            f"Simulating LLM call for wiki update with session {trajectory.session_id} and wiki context..."
+        """
+        Analyze session execution trajectory, identify recurring failure modes
+        or successful resolution strategies, and produce structured wiki updates.
+        """
+        create_patterns: list[dict[str, str]] = []
+        update_patterns: list[dict[str, str]] = []
+        additions: list[str] = []
+
+        error_steps = [s for s in trajectory.steps if s.is_error]
+        error_types: dict[str, list[Any]] = {}
+
+        for s in error_steps:
+            obs = s.observation.lower()
+            if s.tool_name == "Edit" and ("not found" in obs or "replace" in obs):
+                error_types.setdefault("edit-string-mismatch-loop", []).append(s)
+            elif s.tool_name == "Bash" and ("command not found" in obs or "127" in obs):
+                error_types.setdefault("unprefixed-python-runner-loop", []).append(s)
+            elif "modulenotfounderror" in obs or "importerror" in obs:
+                error_types.setdefault("missing-dependency-import-loop", []).append(s)
+            elif "assertionerror" in obs or "failed" in obs:
+                error_types.setdefault("test-assertion-failure-loop", []).append(s)
+            else:
+                error_types.setdefault("generic-tool-error-loop", []).append(s)
+
+        if "edit-string-mismatch-loop" in error_types:
+            count = len(error_types["edit-string-mismatch-loop"])
+            content = f"""# Edit String Mismatch Loop
+
+## Problem
+Encountered {count} failure(s) where string replacement failed because the specified target string did not match the file content exactly.
+
+## Root Cause
+Imprecise whitespace, indentation, or outdated line numbers passed into the Edit tool without inspecting the file immediately beforehand.
+
+## Fix
+1. Always run View on the exact line range immediately before performing an Edit.
+2. Ensure character-for-character exact whitespace in old_string.
+3. For edits spanning >30 lines or 50% of the file, use whole-file Write.
+"""
+            create_patterns.append(
+                {
+                    "name": "edit-string-mismatch-loop",
+                    "content": content,
+                }
+            )
+            additions.append(
+                "- [edit-string-mismatch-loop](wiki/patterns/edit-string-mismatch-loop.md): Edit tool failed to find target string. Cause: whitespace or line mismatch. Fix: view exact line range before editing or use whole-file write."
+            )
+
+        if "unprefixed-python-runner-loop" in error_types:
+            count = len(error_types["unprefixed-python-runner-loop"])
+            content = f"""# Unprefixed Python Runner Loop
+
+## Problem
+Encountered {count} command failure(s) with 'command not found' (Exit code 127) when attempting to run tools or test suites directly.
+
+## Root Cause
+Executing bare 'pytest', 'ruff', or python scripts in subshells where tools are not globally symlinked in the system PATH.
+
+## Fix
+Always execute commands using the uv virtual environment runner:
+- `uv run pytest -v`
+- `uv run ruff check .`
+- `uv run python <script.py>`
+"""
+            create_patterns.append(
+                {
+                    "name": "unprefixed-python-runner-loop",
+                    "content": content,
+                }
+            )
+            additions.append(
+                "- [unprefixed-python-runner-loop](wiki/patterns/unprefixed-python-runner-loop.md): Command not found when running python tools. Cause: bare invocation without virtualenv. Fix: prefix with 'uv run <command>'."
+            )
+
+        if "missing-dependency-import-loop" in error_types:
+            count = len(error_types["missing-dependency-import-loop"])
+            content = f"""# Missing Dependency Import Loop
+
+## Problem
+Encountered {count} import error(s) with ModuleNotFoundError.
+
+## Root Cause
+Import paths were not aligned with workspace package hierarchy or dependency was missing from pyproject.toml.
+
+## Fix
+Add missing dependencies with `uv add` and ensure package imports are referenced from the project root.
+"""
+            create_patterns.append(
+                {
+                    "name": "missing-dependency-import-loop",
+                    "content": content,
+                }
+            )
+            additions.append(
+                "- [missing-dependency-import-loop](wiki/patterns/missing-dependency-import-loop.md): ModuleNotFoundError during execution. Cause: missing package or path issue. Fix: add via uv and align root package imports."
+            )
+
+        if "test-assertion-failure-loop" in error_types:
+            count = len(error_types["test-assertion-failure-loop"])
+            content = f"""# Test Assertion Failure Loop
+
+## Problem
+Encountered {count} test assertion failure(s) during test runner execution.
+
+## Root Cause
+Implementation did not fulfill expected contract or test expectations were outdated.
+
+## Fix
+Review failure logs, make minimal targeted code adjustments, and re-run tests until green.
+"""
+            create_patterns.append(
+                {
+                    "name": "test-assertion-failure-loop",
+                    "content": content,
+                }
+            )
+            additions.append(
+                "- [test-assertion-failure-loop](wiki/patterns/test-assertion-failure-loop.md): Test assertion failed. Cause: contract mismatch. Fix: inspect test failure and apply targeted minimal patch."
+            )
+
+        if not create_patterns:
+            # Fallback pattern if 0 errors found
+            content = f"""# Clean Execution Pattern
+
+## Problem
+No critical execution errors detected in session {trajectory.session_id}.
+
+## Root Cause
+Commands and tool calls executed cleanly across {len(trajectory.steps)} steps.
+
+## Fix
+Continue standard TDD workflow.
+"""
+            create_patterns.append(
+                {
+                    "name": "clean-execution-pattern",
+                    "content": content,
+                }
+            )
+            additions.append(
+                f"- [clean-execution-pattern](wiki/patterns/clean-execution-pattern.md): Clean session execution for session {trajectory.session_id}."
+            )
+
+        pattern_names = [p["name"] for p in create_patterns]
+        log_entry = (
+            f"Session {trajectory.session_id}: Analyzed {len(trajectory.steps)} steps "
+            f"({len(error_steps)} errors); extracted patterns: {', '.join(pattern_names)}."
         )
-        # For now, return a mock response
+
         return {
-            "create_patterns": [],
-            "update_patterns": [],
-            "update_index": {"additions": ["- New pattern: example-pattern"]},
-            "append_log": "Wiki Maintainer processed session mock-session-123.",
+            "create_patterns": create_patterns,
+            "update_patterns": update_patterns,
+            "update_index": {"additions": additions},
+            "append_log": log_entry,
         }
