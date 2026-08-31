@@ -24,6 +24,7 @@ When given a task or issue, execute strictly in these four discrete phases. Do n
 * Run the test suite:
   ```bash
   pytest tests/test_<feature>.py -v
+```
 Assertion Gate: Verify the tests fail for the expected reason (e.g., AttributeError or missing method, not a test syntax/import error).
 
 ### Phase 3: Green Loop (Minimal Implementation)
@@ -32,9 +33,9 @@ Implement the minimal production code needed to satisfy the failing test.
 Avoid premature optimization or implementing speculative features outside the current test.
 
 Run the test suite:
-
-Bash
+```bash
 pytest tests/test_<feature>.py -v
+```
 Iteration Limit: You have a maximum of 3 correction attempts per failing test. If it does not pass after 3 tries:
 
 Halt execution.
@@ -47,11 +48,11 @@ Report the failure, the diff, and the exact error log.
 Clean up code formatting, variable names, and remove dead code.
 
 Ensure type safety, linting, and full regression pass:
-
-Bash
+```bash
 ruff check .
 uvx pyrefly check --summarize-errors
 pytest
+```
 Ensure no regressions exist before declaring the task complete.
 
 ## 2. Environment & Tool Conventions
@@ -79,3 +80,13 @@ Context Budgeting: When checking test outputs, always use targeted flags (pytest
 - Never guess or approximate `old_string`. Always use `View` to inspect the exact line range immediately before calling `Edit`.
 - If an `Edit` call fails, do not guess another string; use `View` to re-fetch the lines.
 - If an edit spans more than 50% of a file or more than 30 lines, use whole-file overwriting via `Write` instead of multiple fragile `Edit` calls.
+
+## 4. Running the WikiSkill Harness
+
+To run the `wikiskill_harness.py` script, use the `uv run` command with the `--post-session` argument.
+
+```bash
+uv run scripts/wikiskill_harness.py --post-session
+```
+
+For local testing, the harness is configured to use a mock SQLite database for session trajectories. This database is automatically created at `~/.claude-code-router/logs.db` if it does not already exist, and it's populated with sample session data. This allows for easy local development and testing without needing a live CCR instance.
