@@ -1,7 +1,7 @@
 import os
 from typing import Any
 
-from MiniMe.scripts.wikiskill_dataclasses import SessionTrajectory
+from .dataclasses import SessionTrajectory
 
 
 class WikiManager:
@@ -11,6 +11,16 @@ class WikiManager:
         self.index_path = os.path.join(base_path, "index.md")
         self.logs_path = os.path.join(base_path, "logs.md")
         self.skill_impact_path = os.path.join(base_path, "skill-impact.md")
+
+    def initialize_wiki(self) -> None:
+        """Ensure wiki directory and core index/log files exist."""
+        os.makedirs(self.patterns_path, exist_ok=True)
+        if not os.path.exists(self.index_path):
+            self._write_file(self.index_path, "# Wiki Pattern Index\n\n")
+        if not os.path.exists(self.logs_path):
+            self._write_file(self.logs_path, "# Wiki Evolution Log\n\n")
+        if not os.path.exists(self.skill_impact_path):
+            self._write_file(self.skill_impact_path, "# Skill Impact Audit Log\n\n")
 
     def _read_file(self, file_path: str) -> str | None:
         try:
@@ -75,10 +85,6 @@ class WikiManager:
     def call_llm_for_wiki_update(
         self, trajectory: SessionTrajectory, wiki_context: str
     ) -> dict[str, Any]:
-        """
-        Analyze session execution trajectory, identify recurring failure modes
-        or successful resolution strategies, and produce structured wiki updates.
-        """
         create_patterns: list[dict[str, str]] = []
         update_patterns: list[dict[str, str]] = []
         additions: list[str] = []
@@ -197,7 +203,6 @@ Review failure logs, make minimal targeted code adjustments, and re-run tests un
             )
 
         if not create_patterns:
-            # Fallback pattern if 0 errors found
             content = f"""# Clean Execution Pattern
 
 ## Problem

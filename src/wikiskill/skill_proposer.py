@@ -6,6 +6,10 @@ class SkillProposer:
     def __init__(self, base_path: str = ".claude/skills"):
         self.base_path = base_path
 
+    def initialize_skills(self) -> None:
+        """Ensure skills directory exists."""
+        Path(self.base_path).mkdir(parents=True, exist_ok=True)
+
     def call_llm_for_skill_proposal(
         self,
         wiki_context: str,
@@ -61,7 +65,6 @@ class SkillProposer:
             )
 
         if not proposals:
-            # Fallback default proposal
             proposals.append(
                 {
                     "action": "patch",

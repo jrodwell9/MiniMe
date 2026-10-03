@@ -1,0 +1,153 @@
+import os
+from pathlib import Path
+from typing import Any
+
+from .claude_log_adapter import ClaudeCodeLogAdapter
+from .skill_proposer import SkillProposer
+from .wiki_manager import WikiManager
+
+
+class WikiSkillHarness:
+    def __init__(
+        self,
+        project_dir: str | Path | None = None,
+        wiki_dir: str | Path | None = None,
+        skills_dir: str | Path | None = None,
+        claude_dir: str | Path | None = None,
+        mock: bool = False,
+        verbose: bool = False,
+    ):
+        self.project_dir = Path(project_dir or os.getcwd()).resolve()
+        self.wiki_dir = Path(
+            wiki_dir or (self.project_dir / ".claude" / "wiki")
+        ).resolve()
+        self.skills_dir = Path(
+            skills_dir or (self.project_dir / ".claude" / "skills")
+        ).resolve()
+        self.claude_dir = Path(os.path.expanduser(claude_dir or "~/.claude")).resolve()
+        self.mock = mock
+        self.verbose = verbose
+
+        projects_dir = self.claude_dir / "projects"
+        mode = "mock" if mock else "auto"
+
+        self.adapter = ClaudeCodeLogAdapter(
+            projects_dir=projects_dir,
+            project_path=self.project_dir,
+            mode=mode,
+        )
+        self.wiki_manager = WikiManager(base_path=str(self.wiki_dir))
+        self.skill_proposer = SkillProposer(base_path=str(self.skills_dir))
+
+    def init_project(self) -> dict[str, Any]:
+        """Scaffold .claude/wiki and .claude/skills directories in target project."""
+        self.wiki_manager.initialize_wiki()
+        self.skill_proposer.initialize_skills()
+        return {
+            "status": "success",
+            "wiki_dir": str(self.wiki_dir),
+            "skills_dir": str(self.skills_dir),
+        }
+
+    def get_status(self) -> dict[str, Any]:
+        """Return active patterns, evolution logs, and skills."""
+        index_content = self.wiki_manager.get_wiki_index() or ""
+        patterns: list[str] = []
+        pattern_dir = Path(self.wiki_manager.patterns_path)
+        if pattern_dir.exists():
+            patterns = [p.stem for p in pattern_dir.glob("*.md")]
+
+        skills: list[str] = []
+        skills_path = Path(self.skill_proposer.base_path)
+        if skills_path.exists():
+            skills = [
+                s.name
+                for s in skills_path.iterdir()
+                if s.is_dir() and (s / "SKILL.md").exists()
+            ]
+
+        return {
+            "project_dir": str(self.project_dir),
+            "wiki_dir": str(self.wiki_dir),
+            "skills_dir": str(self.skills_dir),
+            "patterns": patterns,
+            "skills": skills,
+            "index_summary": index_content.strip(),
+        }
+
+    def run_post_session(
+        self, since: str | None = None, dry_run: bool = False
+    ) -> dict[str, Any]:
+        """Execute self-evolution loop on the latest session transcript."""
+        trajectory = self.adapter.get_latest_session_trajectory(since=since)
+        if not trajectory:
+            return {
+                "status": "no_session",
+                "message": "No session trajectory found to process.",
+            }
+
+        if self.verbose:
+            print(
+                f"Processing session ID: {trajectory.session_id} "
+                f"(model: {trajectory.model_routed}, steps: {len(trajectory.steps)})"
+            )
+
+        # Step 1: Wiki Maintainer processes session trajectory
+        current_wiki_index = self.wiki_manager.get_wiki_index()
+        llm_wiki_response = self.wiki_manager.call_llm_for_wiki_update(
+            trajectory, current_wiki_index or ""
+        )
+
+        # Step 2: Skill Proposer proposes skill edits based on updated wiki state
+        updated_wiki_context = (
+            f"Index: {self.wiki_manager.get_wiki_index() or 'N/A'}\n"
+            f"Skill Impact: {self.wiki_manager.get_skill_impact_log() or 'N/A'}"
+        )
+        proposals = self.skill_proposer.call_llm_for_skill_proposal(
+            updated_wiki_context,
+            patterns=llm_wiki_response.get("create_patterns"),
+        )
+
+        if dry_run:
+            return {
+                "status": "dry_run",
+                "session_id": trajectory.session_id,
+                "model": trajectory.model_routed,
+                "steps_count": len(trajectory.steps),
+                "wiki_updates": llm_wiki_response,
+                "proposals": proposals,
+            }
+
+        # Apply Wiki updates
+        self.wiki_manager.process_llm_wiki_response(llm_wiki_response)
+
+        # Step 3: Apply skills and append audit log
+        for proposal in proposals:
+            self.skill_proposer.apply_skill_proposal(proposal)
+
+            rules_list = "\n".join(f"  + {r}" for r in proposal.get("rules", []))
+            impact_entry = f"""
+## Session {trajectory.session_id}
+- Target Skill: `{proposal["name"]}`
+- Proposal Action: `{proposal["action"]}`
+- Patterns Addressed: {", ".join(proposal.get("patterns_addressed", []))}
+- Acceptance Outcome: Accepted
+- Rules Applied:
+```markdown
+{rules_list}
+```
+"""
+            self.wiki_manager._write_file(
+                self.wiki_manager.skill_impact_path, impact_entry, mode="a"
+            )
+
+        return {
+            "status": "success",
+            "session_id": trajectory.session_id,
+            "model": trajectory.model_routed,
+            "steps_count": len(trajectory.steps),
+            "patterns_created": [
+                p["name"] for p in llm_wiki_response.get("create_patterns", [])
+            ],
+            "proposals": proposals,
+        }

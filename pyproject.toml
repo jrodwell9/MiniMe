@@ -1,7 +1,11 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
 [project]
-name = "minime"
+name = "wikiskill"
 version = "0.1.0"
-description = "Add your description here"
+description = "Self-evolving skill harness and pattern wiki for Claude Code agent sessions"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
@@ -12,11 +16,18 @@ dependencies = [
     "google-api-python-client>=2.100.0",
 ]
 
+[project.scripts]
+wikiskill = "wikiskill.cli:main"
+wikiskill-harness = "wikiskill.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/wikiskill"]
+
 [tool.pyrefly]
 project-includes = [
     "**/*.py*",
     "**/*.ipynb",
-    "scripts/**/*.py",
+    "src/**/*.py",
 ]
 
 [dependency-groups]
@@ -27,5 +38,3 @@ dev = [
     "ruff>=0.14.13",
     "ty>=0.0.12",
 ]
-
-

@@ -1,22 +1,18 @@
 from unittest.mock import patch
 
-from ..scripts.wikiskill_dataclasses import SessionTrajectory
-from ..scripts.wikiskill_harness import (
-    SkillProposer,
-    WikiManager,
-)
+from wikiskill.dataclasses import SessionTrajectory
+from wikiskill.harness import WikiSkillHarness
 
 
-# Test cases for main harness logic (mocking external calls)
 @patch(
-    "MiniMe.scripts.wikiskill_harness.ClaudeCodeLogAdapter.get_latest_session_trajectory"
+    "wikiskill.claude_log_adapter.ClaudeCodeLogAdapter.get_latest_session_trajectory"
 )
-@patch("MiniMe.scripts.wikiskill_harness.WikiManager.call_llm_for_wiki_update")
-@patch("MiniMe.scripts.wikiskill_harness.WikiManager.process_llm_wiki_response")
-@patch("MiniMe.scripts.wikiskill_harness.SkillProposer.call_llm_for_skill_proposal")
-@patch("MiniMe.scripts.wikiskill_harness.SkillProposer.apply_skill_proposal")
-@patch("MiniMe.scripts.wikiskill_harness.WikiManager._write_file")
-def test_main_post_session_flow(
+@patch("wikiskill.wiki_manager.WikiManager.call_llm_for_wiki_update")
+@patch("wikiskill.wiki_manager.WikiManager.process_llm_wiki_response")
+@patch("wikiskill.skill_proposer.SkillProposer.call_llm_for_skill_proposal")
+@patch("wikiskill.skill_proposer.SkillProposer.apply_skill_proposal")
+@patch("wikiskill.wiki_manager.WikiManager._write_file")
+def test_harness_post_session_flow(
     mock_write_file,
     mock_apply_skill,
     mock_skill_proposal,
@@ -25,7 +21,6 @@ def test_main_post_session_flow(
     mock_get_trajectory,
     tmp_path,
 ):
-    # Setup mocks
     mock_get_trajectory.return_value = SessionTrajectory(
         session_id="main-test-session",
         timestamp="2026-08-31T10:00:00Z",
@@ -49,48 +44,23 @@ def test_main_post_session_flow(
         }
     ]
 
-    # Create a temporary directory structure for wiki and skills
     wiki_path = tmp_path / ".claude" / "wiki"
-    patterns_path = wiki_path / "patterns"
-    patterns_path.mkdir(parents=True)
-    (wiki_path / "index.md").write_text("Initial Index\n")
-    (wiki_path / "logs.md").write_text("Initial Log\n")
-    (wiki_path / "skill-impact.md").write_text("Initial Impact\n")
-
     skills_path = tmp_path / ".claude" / "skills"
-    skills_path.mkdir(parents=True)
 
-    wiki_manager_instance = WikiManager(base_path=str(wiki_path))
-    skill_proposer_instance = SkillProposer(base_path=str(skills_path))
-
-    trajectory = mock_get_trajectory()
-    current_wiki_index = wiki_manager_instance.get_wiki_index()
-    llm_wiki_response_data = mock_llm_wiki_update(trajectory, current_wiki_index or "")
-    wiki_manager_instance.process_llm_wiki_response(llm_wiki_response_data)
-
-    updated_wiki_context = (
-        f"Index: {wiki_manager_instance.get_wiki_index() or 'N/A'}\n"
-        f"Skill Impact: {wiki_manager_instance.get_skill_impact_log() or 'N/A'}"
-    )
-    proposals = mock_skill_proposal(
-        updated_wiki_context, patterns=llm_wiki_response_data.get("create_patterns")
+    harness = WikiSkillHarness(
+        project_dir=str(tmp_path),
+        wiki_dir=str(wiki_path),
+        skills_dir=str(skills_path),
     )
 
-    for proposal in proposals:
-        skill_proposer_instance.apply_skill_proposal(proposal)
-        impact_entry = f"## Session {trajectory.session_id}\n- Target Skill: `{proposal['name']}`\n"
-        wiki_manager_instance._write_file(
-            wiki_manager_instance.skill_impact_path, impact_entry, mode="a"
-        )
+    result = harness.run_post_session()
 
-    # Assertions for the main flow
+    assert result["status"] == "success"
+    assert result["session_id"] == "main-test-session"
+    assert len(result["proposals"]) == 1
+
     mock_get_trajectory.assert_called_once()
-    mock_llm_wiki_update.assert_called_once_with(trajectory, current_wiki_index or "")
-    mock_process_wiki.assert_called_once_with(llm_wiki_response_data)
-    mock_skill_proposal.assert_called_once_with(
-        updated_wiki_context, patterns=llm_wiki_response_data.get("create_patterns")
-    )
-    assert any(
-        call.args[0] == str(wiki_path / "skill-impact.md")
-        for call in mock_write_file.call_args_list
-    )
+    mock_llm_wiki_update.assert_called_once()
+    mock_process_wiki.assert_called_once()
+    mock_skill_proposal.assert_called_once()
+    mock_apply_skill.assert_called_once()

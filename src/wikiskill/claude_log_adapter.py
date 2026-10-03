@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from MiniMe.scripts.wikiskill_dataclasses import SessionTrajectory, TrajectoryStep
+from .dataclasses import SessionTrajectory, TrajectoryStep
 
 
 def sanitize_project_path(project_path: str | Path) -> str:

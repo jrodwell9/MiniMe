@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from ..scripts.skill_proposer import SkillProposer
+from wikiskill.skill_proposer import SkillProposer
 
 
 @pytest.fixture

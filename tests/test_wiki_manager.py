@@ -3,8 +3,8 @@ from pathlib import Path
 
 import pytest
 
-from ..scripts.wiki_manager import WikiManager
-from ..scripts.wikiskill_dataclasses import SessionTrajectory, TrajectoryStep
+from wikiskill.dataclasses import SessionTrajectory, TrajectoryStep
+from wikiskill.wiki_manager import WikiManager
 
 
 @pytest.fixture

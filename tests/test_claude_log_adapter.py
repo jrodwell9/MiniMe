@@ -3,11 +3,11 @@ import os
 from datetime import UTC, datetime
 from pathlib import Path
 
-from ..scripts.claude_log_adapter import (
+from wikiskill.claude_log_adapter import (
     ClaudeCodeLogAdapter,
     sanitize_project_path,
 )
-from ..scripts.wikiskill_dataclasses import SessionTrajectory
+from wikiskill.dataclasses import SessionTrajectory
 
 
 def test_sanitize_project_path_windows():
@@ -46,7 +46,9 @@ def test_find_latest_session_file(tmp_path: Path):
     os.utime(file2, (2000, 2000))
 
     adapter = ClaudeCodeLogAdapter(
-        projects_dir=tmp_path, project_path=Path(r"C:\test\project"), mode="file"
+        projects_dir=tmp_path,
+        project_path=Path(r"C:\test\project"),
+        mode="file",
     )
     latest = adapter._find_latest_session_file()
     assert latest == file2
@@ -62,7 +64,9 @@ def test_find_latest_session_file_with_since(tmp_path: Path):
     os.utime(file1, (1000, 1000))
 
     adapter = ClaudeCodeLogAdapter(
-        projects_dir=tmp_path, project_path=Path(r"C:\test\project"), mode="file"
+        projects_dir=tmp_path,
+        project_path=Path(r"C:\test\project"),
+        mode="file",
     )
     since_dt = datetime.fromtimestamp(1500, tz=UTC).isoformat()
     latest = adapter._find_latest_session_file(since=since_dt)
