@@ -6,6 +6,7 @@ origin_session: system
 patterns_addressed:
   - self-evolution
   - continuous-learning
+  - hub-sync-stale-upstream-drift
 ---
 
 # WikiSkill Knowledge System
@@ -24,7 +25,7 @@ When a tool execution fails (e.g. string replacement mismatch, missing command /
 
 ### 3. In-Flight Reflection
 When you encounter and resolve an unexpected, novel issue during a session:
-- Formulate a clean reflection pattern file under `.claude/wiki/patterns/in-flight-<short-slug>.md`.
+- Formulate a clean reflection pattern file under `.claude/wiki/patterns/<short-slug>.md`.
 - Add an entry to `.claude/wiki/index.md` so future turns benefit from this insight.
 
 #### Reflection Pattern Template
@@ -40,3 +41,10 @@ When you encounter and resolve an unexpected, novel issue during a session:
 ## Fix
 <Concrete steps to resolve and prevent recurrence>
 ```
+
+### 4. Hub Synchronization & Pattern Bundling
+When synchronizing knowledge between local workspace and the global WikiSkill Hub:
+- Always ensure the central hub clone (`~/.claude/wikiskill-hub`) is synchronized with `origin/main` before staging files or proposing changes.
+- In `SKILL.md` frontmatter, always declare `patterns_addressed:` using inline `[pat1, pat2]` or multiline `  - pat` syntax so diagnosed failure patterns bundle directly into the skill's candidate branch rather than spawning fragmented PRs.
+- Use `wikiskill sync --pull --prune` to automatically prune merged remote refs and clean stale local proposal branches.
+

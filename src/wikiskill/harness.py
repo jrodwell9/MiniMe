@@ -2,7 +2,7 @@ import os
 from pathlib import Path
 from typing import Any
 
-from .claude_log_adapter import ClaudeCodeLogAdapter
+from .adapters import AgentLogAdapter, AgentLogAdapterFactory, ClaudeCodeLogAdapter
 from .skill_proposer import SkillProposer
 from .wiki_manager import WikiManager
 
@@ -14,6 +14,9 @@ class WikiSkillHarness:
         wiki_dir: str | Path | None = None,
         skills_dir: str | Path | None = None,
         claude_dir: str | Path | None = None,
+        antigravity_dir: str | Path | None = None,
+        adapter: AgentLogAdapter | None = None,
+        agent: str | None = None,
         mock: bool = False,
         verbose: bool = False,
     ):
@@ -25,17 +28,33 @@ class WikiSkillHarness:
             skills_dir or (self.project_dir / ".claude" / "skills")
         ).resolve()
         self.claude_dir = Path(os.path.expanduser(claude_dir or "~/.claude")).resolve()
+        self.antigravity_dir = Path(
+            os.path.expanduser(antigravity_dir or "~/.gemini/antigravity")
+        ).resolve()
         self.mock = mock
         self.verbose = verbose
 
         projects_dir = self.claude_dir / "projects"
         mode = "mock" if mock else "auto"
 
-        self.adapter = ClaudeCodeLogAdapter(
-            projects_dir=projects_dir,
-            project_path=self.project_dir,
-            mode=mode,
-        )
+        if adapter is not None:
+            self.adapter = adapter
+        elif claude_dir and not agent:
+            # Preserve explicit claude directory targeting
+            self.adapter = ClaudeCodeLogAdapter(
+                projects_dir=projects_dir,
+                project_path=self.project_dir,
+                mode=mode,
+            )
+        else:
+            self.adapter = AgentLogAdapterFactory.get_primary_adapter(
+                agent_name=agent,
+                project_path=self.project_dir,
+                claude_dir=self.claude_dir,
+                antigravity_dir=self.antigravity_dir,
+                mode=mode,
+            )
+
         self.wiki_manager = WikiManager(base_path=str(self.wiki_dir))
         self.skill_proposer = SkillProposer(base_path=str(self.skills_dir))
 
@@ -76,10 +95,17 @@ class WikiSkillHarness:
         }
 
     def run_post_session(
-        self, since: str | None = None, dry_run: bool = False
+        self,
+        since: str | None = None,
+        session_file: Path | str | None = None,
+        dry_run: bool = False,
     ) -> dict[str, Any]:
-        """Execute self-evolution loop on the latest session transcript."""
-        trajectory = self.adapter.get_latest_session_trajectory(since=since)
+        """Execute self-evolution loop on the session transcript."""
+        if session_file is not None:
+            trajectory = self.adapter.parse_session_file(Path(session_file))
+        else:
+            trajectory = self.adapter.get_latest_session_trajectory(since=since)
+
         if not trajectory:
             return {
                 "status": "no_session",

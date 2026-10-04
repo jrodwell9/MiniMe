@@ -7,3 +7,4 @@ Status: active
 ## Patterns Addressed
 - `self-evolution`
 - `continuous-learning`
+- `hub-sync-stale-upstream-drift`

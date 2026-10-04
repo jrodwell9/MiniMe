@@ -120,14 +120,14 @@ uv run wikiskill sync --pull
 uv run wikiskill sync --pull --prune
 ```
 
-### 6. `daemon` — Background Watcher Daemon
-Continuously monitors all Claude Code projects (`~/.claude/projects/`). When a new session completes, the daemon automatically runs the evolution loop and syncs updates to the hub.
+### 6. `daemon` — Multi-Agent Background Watcher Daemon
+Continuously monitors all active agent workspaces (Claude Code projects in `~/.claude/projects/` and Antigravity brain conversations in `~/.gemini/antigravity/brain/`). When a new session completes, the daemon automatically parses the trajectory, runs the evolution loop, and syncs updates to the hub.
 
 ```bash
 # Continuous background watcher (default interval: 300s)
 uv run wikiskill daemon
 
-# Single scan pass across all project logs and exit
+# Single scan pass across all agent logs and exit
 uv run wikiskill daemon --once
 
 # Custom scan interval (e.g. 60s)
@@ -136,20 +136,37 @@ uv run wikiskill daemon --interval 60
 
 ---
 
+## Multi-Agent Log Adapters & Extensibility
+
+WikiSkill uses an extensible Factory pattern (`AgentLogAdapterFactory`) to ingest session transcripts across different AI agent environments:
+
+- **`ClaudeCodeLogAdapter`**: Parses Anthropic turn-based tool invocations and results from `~/.claude/projects/`.
+- **`AntigravityLogAdapter`**: Parses Google Antigravity planner steps, tool executions, and errors from `~/.gemini/antigravity/brain/<conv_id>/.system_generated/logs/transcript.jsonl`.
+- **Custom Adapters**: Easily extend to Cursor, Codex, or custom agents by subclassing `AgentLogAdapter` and registering with `AgentLogAdapterFactory.register("cursor", CursorLogAdapter)`.
+
+---
+
 ## Programmatic Python API
 
 ```python
 from wikiskill import (
+    AgentLogAdapterFactory,
+    AntigravityLogAdapter,
+    ClaudeCodeLogAdapter,
     GitHubSyncManager,
     WikiSkillDaemon,
     WikiSkillHarness,
 )
 
-# 1. Run post-session evolution
+# 1. Run post-session evolution using auto-detected agent adapter
 harness = WikiSkillHarness(project_dir=".")
 result = harness.run_post_session()
 
-# 2. Central Hub Synchronization
+# 2. Multi-Agent Background Daemon
+daemon = WikiSkillDaemon()
+processed_sessions = daemon.scan_and_process_sessions()
+
+# 3. Central Hub Synchronization
 sync_manager = GitHubSyncManager()
 sync_manager.init_hub(remote_url="https://github.com/user/personal-wiki-skills.git")
 sync_manager.sync_project_to_hub(project_dir=".", prune=True)
