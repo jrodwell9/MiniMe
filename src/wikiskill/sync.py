@@ -231,6 +231,12 @@ class GitHubSyncManager:
         """Pull latest changes from remote Git hub."""
         if prune:
             self._run_git(["fetch", "--prune", "origin"])
+            code, branches_out = self._run_git(["branch"])
+            if code == 0:
+                for line in branches_out.splitlines():
+                    b_name = line.strip().lstrip("*").strip()
+                    if b_name.startswith("proposal/"):
+                        self._run_git(["branch", "-D", b_name])
         code, _ = self._run_git(["pull", "origin", "main"])
         return code == 0
 
