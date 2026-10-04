@@ -1,6 +1,10 @@
 ---
 name: cli-tool-execution
 description: Rules for executing python tools, test runners, and linters in the project environment.
+status: active
+origin_session: in-flight
+patterns_addressed:
+  - unprefixed-python-runner-loop
 ---
 
 # Operational Rules

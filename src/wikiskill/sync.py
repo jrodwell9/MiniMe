@@ -164,6 +164,105 @@ class GitHubSyncManager:
                     dest_dir.mkdir(parents=True, exist_ok=True)
                     for item in s_dir.iterdir():
                         if item.is_file():
+                            if (
+                                item.name == "SKILL.md"
+                                and (dest_dir / "SKILL.md").exists()
+                            ):
+                                local_text = item.read_text(encoding="utf-8")
+                                dest_text = (dest_dir / "SKILL.md").read_text(
+                                    encoding="utf-8"
+                                )
+                                local_fm = _parse_frontmatter(local_text)
+                                dest_fm = _parse_frontmatter(dest_text)
+
+                                merged_origin = local_fm.get(
+                                    "origin_session"
+                                ) or dest_fm.get("origin_session")
+                                merged_status = local_fm.get("status") or dest_fm.get(
+                                    "status"
+                                )
+                                local_pats = (
+                                    local_fm.get("patterns_addressed")
+                                    or local_fm.get("patterns")
+                                    or []
+                                )
+                                if isinstance(local_pats, str):
+                                    local_pats = [local_pats]
+                                dest_pats = (
+                                    dest_fm.get("patterns_addressed")
+                                    or dest_fm.get("patterns")
+                                    or []
+                                )
+                                if isinstance(dest_pats, str):
+                                    dest_pats = [dest_pats]
+                                merged_pats = list(
+                                    dict.fromkeys(list(local_pats) + list(dest_pats))
+                                )
+
+                                if dest_fm and (
+                                    (
+                                        merged_origin
+                                        and not local_fm.get("origin_session")
+                                    )
+                                    or (merged_status and not local_fm.get("status"))
+                                    or (
+                                        merged_pats
+                                        and not local_fm.get("patterns_addressed")
+                                    )
+                                ):
+                                    pats_yaml = "\n".join(
+                                        f"  - {p}" for p in merged_pats
+                                    )
+                                    pats_block = (
+                                        f"\npatterns_addressed:\n{pats_yaml}"
+                                        if merged_pats
+                                        else ""
+                                    )
+                                    origin_line = (
+                                        f"\norigin_session: {merged_origin}"
+                                        if merged_origin
+                                        else ""
+                                    )
+                                    status_line = (
+                                        f"\nstatus: {merged_status}"
+                                        if merged_status
+                                        else ""
+                                    )
+
+                                    body = (
+                                        local_text.split("---", 2)[2]
+                                        if local_text.startswith("---")
+                                        and len(local_text.split("---", 2)) >= 3
+                                        else local_text
+                                    )
+                                    merged_content = f"""---
+name: {local_fm.get("name", s_dir.name)}
+description: {local_fm.get("description", dest_fm.get("description", ""))}
+{status_line.strip()}
+{origin_line.strip()}
+{pats_block.strip()}
+---
+{body.lstrip()}"""
+                                    (dest_dir / "SKILL.md").write_text(
+                                        merged_content.strip() + "\n", encoding="utf-8"
+                                    )
+                                    continue
+
+                            if (
+                                item.name == "PURPOSE.md"
+                                and (dest_dir / "PURPOSE.md").exists()
+                            ):
+                                local_text = item.read_text(encoding="utf-8")
+                                dest_text = (dest_dir / "PURPOSE.md").read_text(
+                                    encoding="utf-8"
+                                )
+                                if (
+                                    "Origin Session:" not in local_text
+                                    and "Origin Session:" in dest_text
+                                ):
+                                    # Keep existing rich PURPOSE.md from hub
+                                    continue
+
                             shutil.copy2(item, dest_dir / item.name)
                     synced_skills.append(s_dir.name)
 
@@ -262,6 +361,20 @@ class GitHubSyncManager:
                 return (parts[0], parts[1])
         return None
 
+    def _get_file_content(self, filepath: str, branch: str | None = None) -> str | None:
+        """Read file content from a specific branch or local hub filesystem."""
+        if branch:
+            code, content = self._run_git(["show", f"{branch}:{filepath}"])
+            if code == 0:
+                return content
+        local_path = self.hub_dir / filepath
+        if local_path.exists():
+            try:
+                return local_path.read_text(encoding="utf-8")
+            except OSError:
+                pass
+        return None
+
     def _generate_proposal_description(
         self,
         target_branch: str,
@@ -271,104 +384,113 @@ class GitHubSyncManager:
         code, diff_names = self._run_git(
             ["diff", "--name-status", f"{base_branch}..{target_branch}"]
         )
+        if (code != 0 or not diff_names) and target_branch:
+            code, diff_names = self._run_git(["diff", "--cached", "--name-status"])
         if code != 0 or not diff_names:
-            code, diff_names = self._run_git(["diff", "--name-status", base_branch])
+            code, diff_names = self._run_git(
+                ["diff", "--name-status", f"{base_branch}...{target_branch}"]
+            )
 
         skills_seen: set[str] = set()
         patterns_seen: set[str] = set()
         skills_details: list[dict[str, Any]] = []
         patterns_details: list[dict[str, Any]] = []
 
-        for line in diff_names.strip().splitlines():
-            parts = line.split(maxsplit=1)
-            if len(parts) < 2:
-                continue
-            status_code, filepath = parts[0], parts[1]
-            if "global/skills/" in filepath:
-                skill_name = filepath.split("global/skills/")[1].split("/")[0]
-                if skill_name not in skills_seen:
-                    skills_seen.add(skill_name)
-                    skill_md = (
-                        self.hub_dir / "global" / "skills" / skill_name / "SKILL.md"
-                    )
-                    desc = "Operational skill synthesized from session patterns."
-                    origin = None
-                    patterns: list[str] = []
-                    status = "active"
-                    if skill_md.exists():
-                        content = skill_md.read_text(encoding="utf-8")
-                        fm = _parse_frontmatter(content)
-                        if fm.get("description"):
-                            desc = fm["description"]
-                        if fm.get("origin_session"):
-                            origin = fm["origin_session"]
-                        if fm.get("status"):
-                            status = fm["status"]
-                        raw_pats = (
-                            fm.get("patterns_addressed") or fm.get("patterns") or []
+        if diff_names:
+            for line in diff_names.strip().splitlines():
+                parts = line.split(maxsplit=1)
+                if len(parts) < 2:
+                    continue
+                status_code, filepath = parts[0], parts[1].replace("\\", "/")
+                if "global/skills/" in filepath:
+                    skill_name = filepath.split("global/skills/")[1].split("/")[0]
+                    if skill_name not in skills_seen:
+                        skills_seen.add(skill_name)
+                        skill_rel_md = f"global/skills/{skill_name}/SKILL.md"
+                        content = self._get_file_content(
+                            skill_rel_md, branch=target_branch
                         )
-                        if isinstance(raw_pats, str):
-                            patterns = [raw_pats]
-                        else:
-                            patterns = list(raw_pats)
-                    skills_details.append(
-                        {
-                            "name": skill_name,
-                            "description": desc,
-                            "origin_session": origin,
-                            "patterns_addressed": patterns,
-                            "status": status,
-                            "change_type": "New" if status_code == "A" else "Updated",
-                        }
-                    )
+                        desc = "Operational skill synthesized from session patterns."
+                        origin = None
+                        patterns: list[str] = []
+                        status = "active"
+                        if content:
+                            fm = _parse_frontmatter(content)
+                            if fm.get("description"):
+                                desc = fm["description"]
+                            if fm.get("origin_session"):
+                                origin = fm["origin_session"]
+                            if fm.get("status"):
+                                status = fm["status"]
+                            raw_pats = (
+                                fm.get("patterns_addressed") or fm.get("patterns") or []
+                            )
+                            if isinstance(raw_pats, str):
+                                patterns = [raw_pats]
+                            else:
+                                patterns = list(raw_pats)
+                        skills_details.append(
+                            {
+                                "name": skill_name,
+                                "description": desc,
+                                "origin_session": origin,
+                                "patterns_addressed": patterns,
+                                "status": status,
+                                "change_type": "New"
+                                if status_code == "A"
+                                else "Updated",
+                            }
+                        )
 
-            elif "global/wiki/patterns/" in filepath:
-                pat_name = filepath.split("global/wiki/patterns/")[1]
-                if pat_name not in patterns_seen:
-                    patterns_seen.add(pat_name)
-                    pat_file = self.hub_dir / "global" / "wiki" / "patterns" / pat_name
-                    summary = "Diagnosed recurring failure pattern."
-                    fix = None
-                    if pat_file.exists():
-                        pat_text = pat_file.read_text(encoding="utf-8")
-                        lines = pat_text.splitlines()
-                        for i, l in enumerate(lines):
-                            if any(
-                                h in l
-                                for h in [
-                                    "## Description",
-                                    "## Summary",
-                                    "## Diagnosis",
-                                ]
-                            ):
-                                for j in range(i + 1, min(i + 5, len(lines))):
-                                    if lines[j].strip() and not lines[j].startswith(
-                                        "#"
-                                    ):
-                                        summary = lines[j].strip()
-                                        break
-                            if any(
-                                h in l
-                                for h in [
-                                    "## Recommended Fix",
-                                    "## Prevention",
-                                    "## Fix",
-                                ]
-                            ):
-                                for j in range(i + 1, min(i + 5, len(lines))):
-                                    if lines[j].strip() and not lines[j].startswith(
-                                        "#"
-                                    ):
-                                        fix = lines[j].strip()
-                                        break
-                    patterns_details.append(
-                        {
-                            "filename": pat_name,
-                            "summary": summary,
-                            "fix": fix,
-                            "change_type": "New" if status_code == "A" else "Updated",
-                        }
-                    )
+                elif "global/wiki/patterns/" in filepath:
+                    pat_name = filepath.split("global/wiki/patterns/")[1]
+                    if pat_name not in patterns_seen:
+                        patterns_seen.add(pat_name)
+                        pat_rel = f"global/wiki/patterns/{pat_name}"
+                        pat_text = self._get_file_content(pat_rel, branch=target_branch)
+                        summary = "Diagnosed recurring failure pattern."
+                        fix = None
+                        if pat_text:
+                            lines = pat_text.splitlines()
+                            for i, l in enumerate(lines):
+                                if any(
+                                    h in l
+                                    for h in [
+                                        "## Description",
+                                        "## Summary",
+                                        "## Diagnosis",
+                                    ]
+                                ):
+                                    for j in range(i + 1, min(i + 5, len(lines))):
+                                        if lines[j].strip() and not lines[j].startswith(
+                                            "#"
+                                        ):
+                                            summary = lines[j].strip()
+                                            break
+                                if any(
+                                    h in l
+                                    for h in [
+                                        "## Recommended Fix",
+                                        "## Prevention",
+                                        "## Fix",
+                                    ]
+                                ):
+                                    for j in range(i + 1, min(i + 5, len(lines))):
+                                        if lines[j].strip() and not lines[j].startswith(
+                                            "#"
+                                        ):
+                                            fix = lines[j].strip()
+                                            break
+                        patterns_details.append(
+                            {
+                                "filename": pat_name,
+                                "summary": summary,
+                                "fix": fix,
+                                "change_type": "New"
+                                if status_code == "A"
+                                else "Updated",
+                            }
+                        )
 
         md_lines = [
             "## WikiSkill Knowledge Evolution Proposal",
@@ -699,14 +821,16 @@ class GitHubSyncManager:
                 self._run_git(["branch", "-D", target_branch])
                 continue
 
-            # Generate proposal description for this specific skill branch
+            # Commit staged changes to candidate branch first
+            c_msg = f"feat(skill): propose {skill_name} skill"
+            self._run_git(["commit", "-m", c_msg])
+
+            # Generate proposal description strictly for this branch's committed delta
             proposal_desc = self._generate_proposal_description(
                 target_branch, base_branch="main"
             )
 
-            # Commit and push
-            c_msg = f"feat(skill): propose {skill_name} skill"
-            self._run_git(["commit", "-m", c_msg])
+            # Push branch
             push_code, _ = self._run_git(["push", "-u", "origin", target_branch])
             if push_code != 0:
                 push_code, _ = self._run_git(["push", "origin", target_branch])
@@ -753,11 +877,13 @@ class GitHubSyncManager:
 
             _, staged_diff = self._run_git(["diff", "--cached", "--name-only"])
             if staged_diff and staged_diff.strip():
-                pat_desc = self._generate_proposal_description(
-                    pat_branch, base_branch="main"
-                )
+                # Commit staged changes to pattern candidate branch first
                 self._run_git(
                     ["commit", "-m", "docs(patterns): propose failure patterns update"]
+                )
+                # Generate proposal description strictly for pattern updates
+                pat_desc = self._generate_proposal_description(
+                    pat_branch, base_branch="main"
                 )
                 push_code, _ = self._run_git(["push", "-u", "origin", pat_branch])
                 if push_code != 0:

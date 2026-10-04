@@ -1,6 +1,8 @@
 from pathlib import Path
 from typing import Any
 
+from .sync import _parse_frontmatter
+
 
 class SkillProposer:
     def __init__(self, base_path: str = ".claude/skills"):
@@ -148,6 +150,7 @@ class SkillProposer:
     ) -> None:
         """
         Write or update the SKILL.md and PURPOSE.md files in the skills directory with frontmatter metadata.
+        Preserves existing status, origin_session, and patterns_addressed if present.
         """
         skill_dir = Path(self.base_path) / proposal["name"]
         skill_dir.mkdir(parents=True, exist_ok=True)
@@ -155,13 +158,38 @@ class SkillProposer:
         skill_file = skill_dir / "SKILL.md"
         purpose_file = skill_dir / "PURPOSE.md"
 
-        rules_markdown = "\n".join(f"- {rule}" for rule in proposal.get("rules", []))
-        patterns_addressed = proposal.get("patterns_addressed", [])
-        patterns_yaml = "\n".join(f"  - {pat}" for pat in patterns_addressed)
-        patterns_markdown = "\n".join(f"- `{pat}`" for pat in patterns_addressed)
+        existing_origin = ""
+        existing_status = ""
+        existing_patterns: list[str] = []
 
-        origin = session_id or proposal.get("origin_session", "")
-        status = proposal.get("status", "active")
+        if skill_file.exists():
+            try:
+                content = skill_file.read_text(encoding="utf-8")
+                fm = _parse_frontmatter(content)
+                existing_origin = fm.get("origin_session", "")
+                existing_status = fm.get("status", "")
+                raw_pats = fm.get("patterns_addressed") or fm.get("patterns") or []
+                if isinstance(raw_pats, str):
+                    existing_patterns = [raw_pats]
+                else:
+                    existing_patterns = list(raw_pats)
+            except OSError:
+                pass
+
+        origin = (
+            proposal.get("origin_session")
+            or existing_origin
+            or session_id
+            or "in-flight"
+        )
+        status = proposal.get("status") or existing_status or "active"
+
+        prop_patterns = proposal.get("patterns_addressed", [])
+        combined_patterns = list(dict.fromkeys(prop_patterns + existing_patterns))
+        patterns_yaml = "\n".join(f"  - {pat}" for pat in combined_patterns)
+        patterns_markdown = "\n".join(f"- `{pat}`" for pat in combined_patterns)
+
+        rules_markdown = "\n".join(f"- {rule}" for rule in proposal.get("rules", []))
 
         skill_content = f"""---
 name: {proposal["name"]}

@@ -31,7 +31,7 @@ class WikiSkillDaemon:
         self.sync_manager = GitHubSyncManager(hub_dir=self.hub_dir)
         self.sync_manager.init_hub()
 
-        self.processed_sessions: set[str] = self._load_state()
+        self.processed_sessions: dict[str, Any] = self._load_state()
 
         if adapters is not None:
             self.adapters = adapters
@@ -57,34 +57,44 @@ class WikiSkillDaemon:
                     )
                 ]
 
-    def _load_state(self) -> set[str]:
+    def _load_state(self) -> dict[str, Any]:
         if self.state_file.exists():
             try:
                 data = json.loads(self.state_file.read_text(encoding="utf-8"))
+                if isinstance(data, dict):
+                    return data
                 if isinstance(data, list):
-                    return set(data)
+                    return {k: {"mtime": 0.0, "step_count": 0} for k in data}
             except (json.JSONDecodeError, OSError):
                 pass
-        return set()
+        return {}
 
     def _save_state(self) -> None:
         try:
             self.state_file.parent.mkdir(parents=True, exist_ok=True)
             self.state_file.write_text(
-                json.dumps(sorted(self.processed_sessions), indent=2),
+                json.dumps(self.processed_sessions, indent=2),
                 encoding="utf-8",
             )
         except OSError as e:
             print(f"Warning: Failed to save processed sessions state: {e}")
 
     def scan_and_process_sessions(self) -> list[dict[str, Any]]:
-        """Scan all detected agent environments and process unhandled sessions."""
+        """Scan all detected agent environments and process unhandled or updated sessions."""
         processed_results: list[dict[str, Any]] = []
 
         for adapter in self.adapters:
             unprocessed = adapter.discover_unprocessed_sessions(self.processed_sessions)
-            for record_key, session_file in unprocessed:
+            for record_key, session_file, checkpoint in unprocessed:
                 try:
+                    file_mtime = session_file.stat().st_mtime
+                    checkpoint_dict = checkpoint if isinstance(checkpoint, dict) else {}
+                    start_step = int(checkpoint_dict.get("step_count", 0))
+                    raw_ts = checkpoint_dict.get("last_timestamp")
+                    last_timestamp: str | None = (
+                        str(raw_ts) if raw_ts is not None else None
+                    )
+
                     harness = WikiSkillHarness(
                         project_dir=self.hub_dir,
                         wiki_dir=self.hub_dir / "global" / "wiki",
@@ -92,23 +102,42 @@ class WikiSkillDaemon:
                         adapter=adapter,
                     )
 
-                    res = harness.run_post_session(session_file=session_file)
-                    if res.get("status") in ("success", "clean_session"):
+                    res = harness.run_post_session(
+                        session_file=session_file,
+                        since=last_timestamp,
+                        start_step=start_step,
+                    )
+                    steps_count = res.get("steps_count", 0)
+
+                    if res.get("status") in ("success", "clean_session") and (
+                        steps_count > 0 or res.get("patterns_created")
+                    ):
                         processed_results.append(
                             {
                                 "agent": adapter.agent_name,
                                 "session_id": res.get("session_id", session_file.stem),
                                 "record_key": record_key,
+                                "steps_count": steps_count,
                                 "patterns": res.get("patterns_created", []),
                                 "proposals": res.get("proposals", []),
                             }
                         )
-                    self.processed_sessions.add(record_key)
+
+                    # Update checkpoint with latest mtime, accumulated step count, and timestamp
+                    self.processed_sessions[record_key] = {
+                        "mtime": file_mtime,
+                        "step_count": start_step + steps_count,
+                        "last_timestamp": res.get("timestamp") or last_timestamp,
+                    }
                 except (OSError, ValueError, KeyError, json.JSONDecodeError) as e:
                     print(
                         f"Error processing session '{record_key}' from {session_file}: {e}"
                     )
-                    self.processed_sessions.add(record_key)
+                    if record_key not in self.processed_sessions:
+                        self.processed_sessions[record_key] = {
+                            "mtime": session_file.stat().st_mtime,
+                            "step_count": 0,
+                        }
 
         if processed_results:
             self._save_state()

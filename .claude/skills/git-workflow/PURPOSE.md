@@ -1,5 +1,8 @@
-# git-workflow Skill Purpose
+# Purpose & Origin
 
-Origin: Initial placeholder.
-Patterns Addressed: None yet.
-History: Created as part of WikiSkill harness setup.
+## Origin
+Synthesized in-flight to prevent premature commit races during interactive IDE pair programming.
+Status: active
+
+## Patterns Addressed
+- `ide-diff-buffer-commit-race`

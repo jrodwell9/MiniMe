@@ -1,6 +1,10 @@
 ---
 name: file-editing
 description: Best practices and guardrails for safe, exact file modifications.
+status: active
+origin_session: in-flight
+patterns_addressed:
+  - edit-string-mismatch-loop
 ---
 
 # Operational Rules

@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from wikiskill.dataclasses import SessionTrajectory, TrajectoryStep
+from wikiskill.models import SessionTrajectory, TrajectoryStep
 from wikiskill.wiki_manager import WikiManager
 
 

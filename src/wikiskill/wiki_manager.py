@@ -1,7 +1,7 @@
 import os
 from typing import Any
 
-from .dataclasses import SessionTrajectory
+from .models import SessionTrajectory
 
 
 class WikiManager:

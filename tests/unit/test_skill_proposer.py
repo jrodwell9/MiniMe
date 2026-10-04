@@ -130,3 +130,49 @@ def test_skill_proposer_rejects_frontmatter_tombstone(skill_proposer, tmp_path):
 
     assert "file-editing" not in skill_names
     assert "cli-tool-execution" in skill_names
+
+
+def test_skill_proposer_preserves_existing_frontmatter_and_origin(
+    skill_proposer, tmp_path
+):
+    skill_dir = Path(skill_proposer.base_path) / "test-preserve-skill"
+    skill_dir.mkdir(parents=True, exist_ok=True)
+    (skill_dir / "SKILL.md").write_text(
+        """---
+name: test-preserve-skill
+description: Existing description
+status: active
+origin_session: original-session-uuid-123
+patterns_addressed:
+  - original-pattern-1
+---
+# Operational Rules
+## Rules
+- Existing rule 1
+""",
+        encoding="utf-8",
+    )
+
+    # Re-apply proposal without origin_session or with new session_id
+    update_proposal = {
+        "action": "create",
+        "name": "test-preserve-skill",
+        "description": "Updated description",
+        "rules": ["New rule 1"],
+        "patterns_addressed": ["new-pattern-2"],
+    }
+    skill_proposer.apply_skill_proposal(
+        update_proposal, session_id="secondary-session-456"
+    )
+
+    skill_content = (skill_dir / "SKILL.md").read_text(encoding="utf-8")
+    # Must preserve the original origin_session
+    assert "origin_session: original-session-uuid-123" in skill_content
+    assert "status: active" in skill_content
+    # Must contain both patterns addressed
+    assert "original-pattern-1" in skill_content
+    assert "new-pattern-2" in skill_content
+
+    purpose_content = (skill_dir / "PURPOSE.md").read_text(encoding="utf-8")
+    assert "Origin Session: original-session-uuid-123" in purpose_content
+    assert "Status: active" in purpose_content

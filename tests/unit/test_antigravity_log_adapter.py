@@ -128,15 +128,100 @@ def test_antigravity_discover_unprocessed_sessions(tmp_path: Path):
     # Initial discovery
     discovered = adapter.discover_unprocessed_sessions(set())
     assert len(discovered) == 2
-    keys = [k for k, _ in discovered]
+    keys = [item[0] for item in discovered]
     assert "antigravity:conv-111" in keys
     assert "antigravity:conv-222" in keys
 
-    # With conv-111 marked processed
+    # With conv-111 marked processed in a set
     processed = {"antigravity:conv-111"}
     discovered_subset = adapter.discover_unprocessed_sessions(processed)
     assert len(discovered_subset) == 1
     assert discovered_subset[0][0] == "antigravity:conv-222"
+
+    # With dict checkpoint containing mtime
+    f1 = conv1 / "transcript.jsonl"
+    f1_mtime = f1.stat().st_mtime
+    checkpoint_state = {
+        "antigravity:conv-111": {"mtime": f1_mtime, "step_count": 5},
+        "antigravity:conv-222": {"mtime": 0.0, "step_count": 0},
+    }
+    discovered_dict = adapter.discover_unprocessed_sessions(checkpoint_state)
+    # conv-111 is up-to-date, conv-222 has mtime > 0.0
+    assert len(discovered_dict) == 1
+    assert discovered_dict[0][0] == "antigravity:conv-222"
+    assert discovered_dict[0][2] == {"mtime": 0.0, "step_count": 0}
+
+
+def test_antigravity_parse_transcript_start_step(tmp_path: Path):
+    conv_id = "conv-step-test"
+    conv_dir = tmp_path / "brain" / conv_id / ".system_generated" / "logs"
+    conv_dir.mkdir(parents=True)
+    transcript_file = conv_dir / "transcript.jsonl"
+
+    records = [
+        {
+            "step_index": 0,
+            "source": "USER_EXPLICIT",
+            "type": "USER_INPUT",
+            "content": "test step 0",
+        },
+        {
+            "step_index": 1,
+            "source": "MODEL",
+            "type": "PLANNER_RESPONSE",
+            "tool_calls": [
+                {
+                    "name": "view_file",
+                    "args": {"AbsolutePath": "file1.py"},
+                }
+            ],
+        },
+        {
+            "step_index": 2,
+            "source": "MODEL",
+            "type": "GENERIC",
+            "content": "content of file 1",
+        },
+        {
+            "step_index": 3,
+            "source": "MODEL",
+            "type": "PLANNER_RESPONSE",
+            "tool_calls": [
+                {
+                    "name": "run_command",
+                    "args": {"CommandLine": "pytest"},
+                }
+            ],
+        },
+        {
+            "step_index": 4,
+            "source": "MODEL",
+            "type": "GENERIC",
+            "content": "passed",
+        },
+    ]
+    with open(transcript_file, "w", encoding="utf-8") as f:
+        f.writelines(json.dumps(r) + "\n" for r in records)
+
+    adapter = AntigravityLogAdapter(antigravity_dir=tmp_path)
+
+    # start_step = 0 -> all 2 steps
+    traj_all = adapter.parse_session_file(transcript_file, start_step=0)
+    assert traj_all is not None
+    assert len(traj_all.steps) == 2
+    assert traj_all.steps[0].tool_name == "view_file"
+    assert traj_all.steps[1].tool_name == "run_command"
+
+    # start_step = 1 -> only step 2 (run_command)
+    traj_delta = adapter.parse_session_file(transcript_file, start_step=1)
+    assert traj_delta is not None
+    assert len(traj_delta.steps) == 1
+    assert traj_delta.steps[0].tool_name == "run_command"
+
+    # start_step >= 2 -> 0 steps
+    traj_empty = adapter.parse_session_file(transcript_file, start_step=2)
+    assert traj_empty is not None
+    assert len(traj_empty.steps) == 0
 
 
 def test_antigravity_find_latest_session_file_with_since(tmp_path: Path):

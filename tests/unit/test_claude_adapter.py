@@ -3,11 +3,11 @@ import os
 from datetime import UTC, datetime
 from pathlib import Path
 
-from wikiskill.claude_log_adapter import (
+from wikiskill.adapters.claude import (
     ClaudeCodeLogAdapter,
     sanitize_project_path,
 )
-from wikiskill.dataclasses import SessionTrajectory
+from wikiskill.models import SessionTrajectory
 
 
 def test_sanitize_project_path_windows():
@@ -144,14 +144,13 @@ def test_parse_session_jsonl(tmp_path: Path):
     ]
 
     with open(session_file, "w", encoding="utf-8") as f:
-        for item in lines:
-            if isinstance(item, dict):
-                f.write(json.dumps(item) + "\n")
-            else:
-                f.write(item + "\n")
+        f.writelines(
+            (json.dumps(item) + "\n") if isinstance(item, dict) else (item + "\n")
+            for item in lines
+        )
 
     adapter = ClaudeCodeLogAdapter(mode="file")
-    trajectory = adapter._parse_session_jsonl(session_file)
+    trajectory = adapter.parse_session_file(session_file)
 
     assert trajectory is not None
     assert trajectory.session_id == "test-sess-uuid"
@@ -174,3 +173,120 @@ def test_parse_session_jsonl(tmp_path: Path):
     assert step2.tool_input == {"file_path": "nonexistent.py"}
     assert "FileNotFoundError" in step2.observation
     assert step2.is_error is True
+
+
+def test_claude_parse_session_start_step(tmp_path: Path):
+    session_file = tmp_path / "test-session-steps.jsonl"
+    lines = [
+        {"type": "mode", "sessionId": "sess-step"},
+        {
+            "type": "assistant",
+            "message": {
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "id": "call_1",
+                        "name": "Bash",
+                        "input": {"command": "ls"},
+                    }
+                ]
+            },
+        },
+        {
+            "type": "user",
+            "message": {
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": "call_1",
+                        "content": "file.txt",
+                        "is_error": False,
+                    }
+                ]
+            },
+        },
+        {
+            "type": "assistant",
+            "message": {
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "id": "call_2",
+                        "name": "Read",
+                        "input": {"file_path": "file.txt"},
+                    }
+                ]
+            },
+        },
+        {
+            "type": "user",
+            "message": {
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": "call_2",
+                        "content": "hello",
+                        "is_error": False,
+                    }
+                ]
+            },
+        },
+    ]
+    with open(session_file, "w", encoding="utf-8") as f:
+        f.writelines(json.dumps(item) + "\n" for item in lines)
+
+    adapter = ClaudeCodeLogAdapter(mode="file")
+
+    # start_step = 0 -> 2 steps
+    traj_all = adapter.parse_session_file(session_file, start_step=0)
+    assert traj_all is not None
+    assert len(traj_all.steps) == 2
+
+    # start_step = 1 -> 1 step (second step)
+    traj_delta = adapter.parse_session_file(session_file, start_step=1)
+    assert traj_delta is not None
+    assert len(traj_delta.steps) == 1
+    assert traj_delta.steps[0].tool_name == "Read"
+
+    # start_step >= 2 -> 0 steps
+    traj_empty = adapter.parse_session_file(session_file, start_step=2)
+    assert traj_empty is not None
+    assert len(traj_empty.steps) == 0
+
+
+def test_claude_discover_unprocessed_sessions(tmp_path: Path):
+    proj_dir1 = tmp_path / "proj1"
+    proj_dir2 = tmp_path / "proj2"
+    proj_dir1.mkdir(parents=True)
+    proj_dir2.mkdir(parents=True)
+
+    f1 = proj_dir1 / "sess1.jsonl"
+    f2 = proj_dir2 / "sess2.jsonl"
+    f1.write_text('{"type": "mode"}\n', encoding="utf-8")
+    f2.write_text('{"type": "mode"}\n', encoding="utf-8")
+
+    adapter = ClaudeCodeLogAdapter(projects_dir=tmp_path)
+    assert adapter.is_available() is True
+
+    # Initial discovery with empty set
+    discovered = adapter.discover_unprocessed_sessions(set())
+    assert len(discovered) == 2
+    keys = [item[0] for item in discovered]
+    assert "claude:proj1/sess1" in keys
+    assert "claude:proj2/sess2" in keys
+
+    # With proj1/sess1 marked processed in set
+    subset = adapter.discover_unprocessed_sessions({"claude:proj1/sess1"})
+    assert len(subset) == 1
+    assert subset[0][0] == "claude:proj2/sess2"
+
+    # With dict checkpoint containing mtime
+    f1_mtime = f1.stat().st_mtime
+    checkpoint_state = {
+        "claude:proj1/sess1": {"mtime": f1_mtime, "step_count": 2},
+        "claude:proj2/sess2": {"mtime": 0.0, "step_count": 0},
+    }
+    discovered_dict = adapter.discover_unprocessed_sessions(checkpoint_state)
+    assert len(discovered_dict) == 1
+    assert discovered_dict[0][0] == "claude:proj2/sess2"
+    assert discovered_dict[0][2] == {"mtime": 0.0, "step_count": 0}

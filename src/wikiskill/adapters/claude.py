@@ -52,16 +52,16 @@ class ClaudeCodeLogAdapter(AgentLogAdapter):
         if not session_file:
             return None
 
-        return self.parse_session_file(session_file)
+        return self.parse_session_file(session_file, since=since)
 
     def discover_unprocessed_sessions(
-        self, processed_records: set[str]
-    ) -> list[tuple[str, Path]]:
-        """Scan all project folders under projects_dir for unprocessed .jsonl transcripts."""
+        self, processed_state: dict[str, Any] | set[str]
+    ) -> list[tuple[str, Path, dict[str, Any] | None]]:
+        """Scan all project folders under projects_dir for unhandled or updated .jsonl transcripts."""
         if not self.is_available():
             return []
 
-        results: list[tuple[str, Path]] = []
+        results: list[tuple[str, Path, dict[str, Any] | None]] = []
         for proj_folder in self.projects_dir.iterdir():
             if not proj_folder.is_dir():
                 continue
@@ -70,13 +70,34 @@ class ClaudeCodeLogAdapter(AgentLogAdapter):
                 session_id = jsonl_file.stem
                 record_key = f"{proj_folder.name}/{session_id}"
                 namespaced_key = f"claude:{record_key}"
-                if (
-                    record_key in processed_records
-                    or namespaced_key in processed_records
-                    or session_id in processed_records
-                ):
-                    continue
-                results.append((namespaced_key, jsonl_file))
+                file_mtime = jsonl_file.stat().st_mtime
+
+                if isinstance(processed_state, dict):
+                    checkpoint = (
+                        processed_state.get(namespaced_key)
+                        or processed_state.get(record_key)
+                        or processed_state.get(session_id)
+                    )
+                    if checkpoint is None:
+                        results.append((namespaced_key, jsonl_file, None))
+                    elif isinstance(checkpoint, dict):
+                        last_mtime = checkpoint.get("mtime", 0.0)
+                        if file_mtime > last_mtime + 0.001:
+                            results.append((namespaced_key, jsonl_file, checkpoint))
+                    elif (
+                        isinstance(checkpoint, (int, float))
+                        and file_mtime > checkpoint + 0.001
+                    ):
+                        results.append(
+                            (namespaced_key, jsonl_file, {"mtime": checkpoint})
+                        )
+                else:
+                    if (
+                        record_key not in processed_state
+                        and namespaced_key not in processed_state
+                        and session_id not in processed_state
+                    ):
+                        results.append((namespaced_key, jsonl_file, None))
 
         return results
 
@@ -109,7 +130,6 @@ class ClaudeCodeLogAdapter(AgentLogAdapter):
             except ValueError as e:
                 print(f"Warning: Failed to parse 'since' timestamp '{since}': {e}")
 
-        # Sort files by modification time descending
         jsonl_files.sort(key=lambda p: p.stat().st_mtime, reverse=True)
 
         for file_path in jsonl_files:
@@ -120,16 +140,18 @@ class ClaudeCodeLogAdapter(AgentLogAdapter):
 
         return None
 
-    def parse_session_file(self, file_path: Path) -> SessionTrajectory | None:
-        return self._parse_session_jsonl(file_path)
-
-    def _parse_session_jsonl(self, file_path: Path) -> SessionTrajectory | None:
+    def parse_session_file(
+        self,
+        file_path: Path,
+        since: str | None = None,
+        start_step: int = 0,
+    ) -> SessionTrajectory | None:
         session_id: str = file_path.stem
         timestamp: str = datetime.fromtimestamp(
             file_path.stat().st_mtime, tz=UTC
         ).isoformat()
         model_routed: str = "unknown"
-        steps: list[TrajectoryStep] = []
+        all_steps: list[TrajectoryStep] = []
 
         tool_calls: dict[str, dict[str, Any]] = {}
 
@@ -165,7 +187,6 @@ class ClaudeCodeLogAdapter(AgentLogAdapter):
 
                     rec_type = record.get("type")
 
-                    # Assistant turn: captures tool_use invocations
                     if rec_type == "assistant":
                         if msg.get("model"):
                             model_routed = msg["model"]
@@ -183,7 +204,6 @@ class ClaudeCodeLogAdapter(AgentLogAdapter):
                                             "input": block.get("input", {}),
                                         }
 
-                    # User turn: captures tool_result observations
                     elif rec_type == "user":
                         content = msg.get("content", [])
                         if isinstance(content, list):
@@ -211,9 +231,9 @@ class ClaudeCodeLogAdapter(AgentLogAdapter):
                                     else:
                                         observation = str(raw_content)
 
-                                    steps.append(
+                                    all_steps.append(
                                         TrajectoryStep(
-                                            step_number=len(steps) + 1,
+                                            step_number=len(all_steps) + 1,
                                             tool_name=tool_name,
                                             tool_input=tool_input,
                                             observation=observation,
@@ -225,11 +245,18 @@ class ClaudeCodeLogAdapter(AgentLogAdapter):
             print(f"Error reading session file {file_path}: {e}")
             return None
 
+        # Filter steps based on start_step
+        filtered_steps = all_steps
+        if start_step > 0 and start_step < len(all_steps):
+            filtered_steps = all_steps[start_step:]
+        elif start_step >= len(all_steps):
+            filtered_steps = []
+
         return SessionTrajectory(
             session_id=session_id,
             timestamp=timestamp,
             model_routed=model_routed,
-            steps=steps,
+            steps=filtered_steps,
             final_status="success",
         )
 

@@ -27,15 +27,23 @@ class AgentLogAdapter(ABC):
 
     @abstractmethod
     def discover_unprocessed_sessions(
-        self, processed_records: set[str]
-    ) -> list[tuple[str, Path]]:
+        self, processed_state: dict[str, Any] | set[str]
+    ) -> list[tuple[str, Path, dict[str, Any] | None]]:
         """
-        Discover unhandled session records across projects/conversations for this agent.
-        Returns a list of tuples: (record_key, session_file_path).
+        Discover unhandled or updated session records across projects/conversations.
+        Returns a list of tuples: (record_key, session_file_path, checkpoint_or_None).
         """
         ...
 
     @abstractmethod
-    def parse_session_file(self, file_path: Path) -> SessionTrajectory | None:
-        """Parse a specific session transcript file into a normalized SessionTrajectory."""
+    def parse_session_file(
+        self,
+        file_path: Path,
+        since: str | None = None,
+        start_step: int = 0,
+    ) -> SessionTrajectory | None:
+        """
+        Parse a specific session transcript file into a normalized SessionTrajectory.
+        If `since` timestamp or `start_step` is provided, parses only incremental delta steps.
+        """
         ...

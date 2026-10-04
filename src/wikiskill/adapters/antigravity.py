@@ -16,7 +16,6 @@ def _clean_antigravity_arg(val: Any) -> Any:
             val_str.startswith("'") and val_str.endswith("'")
         ):
             try:
-                # Try json loads to unescape safely
                 return json.loads(val_str)
             except (json.JSONDecodeError, ValueError):
                 return val_str[1:-1]
@@ -61,16 +60,16 @@ class AntigravityLogAdapter(AgentLogAdapter):
         if not session_file:
             return None
 
-        return self.parse_session_file(session_file)
+        return self.parse_session_file(session_file, since=since)
 
     def discover_unprocessed_sessions(
-        self, processed_records: set[str]
-    ) -> list[tuple[str, Path]]:
-        """Scan all conversation directories under brain_dir for unprocessed transcripts."""
+        self, processed_state: dict[str, Any] | set[str]
+    ) -> list[tuple[str, Path, dict[str, Any] | None]]:
+        """Scan all conversation directories under brain_dir for unhandled or updated transcripts."""
         if not self.is_available():
             return []
 
-        results: list[tuple[str, Path]] = []
+        results: list[tuple[str, Path, dict[str, Any] | None]] = []
         for conv_folder in self.brain_dir.iterdir():
             if not conv_folder.is_dir():
                 continue
@@ -79,17 +78,32 @@ class AntigravityLogAdapter(AgentLogAdapter):
                 conv_folder / ".system_generated" / "logs" / "transcript.jsonl"
             )
             if not transcript_file.exists():
-                # Check directly in conv_folder as fallback
                 transcript_file = conv_folder / "transcript.jsonl"
                 if not transcript_file.exists():
                     continue
 
             conv_id = conv_folder.name
             record_key = f"antigravity:{conv_id}"
-            if record_key in processed_records or conv_id in processed_records:
-                continue
+            file_mtime = transcript_file.stat().st_mtime
 
-            results.append((record_key, transcript_file))
+            if isinstance(processed_state, dict):
+                checkpoint = processed_state.get(record_key) or processed_state.get(
+                    conv_id
+                )
+                if checkpoint is None:
+                    results.append((record_key, transcript_file, None))
+                elif isinstance(checkpoint, dict):
+                    last_mtime = checkpoint.get("mtime", 0.0)
+                    if file_mtime > last_mtime + 0.001:
+                        results.append((record_key, transcript_file, checkpoint))
+                elif (
+                    isinstance(checkpoint, (int, float))
+                    and file_mtime > checkpoint + 0.001
+                ):
+                    results.append((record_key, transcript_file, {"mtime": checkpoint}))
+            else:
+                if record_key not in processed_state and conv_id not in processed_state:
+                    results.append((record_key, transcript_file, None))
 
         return results
 
@@ -120,7 +134,6 @@ class AntigravityLogAdapter(AgentLogAdapter):
             except ValueError as e:
                 print(f"Warning: Failed to parse 'since' timestamp '{since}': {e}")
 
-        # Sort files by modification time descending
         candidate_files.sort(key=lambda p: p.stat().st_mtime, reverse=True)
 
         for file_path in candidate_files:
@@ -131,8 +144,12 @@ class AntigravityLogAdapter(AgentLogAdapter):
 
         return None
 
-    def parse_session_file(self, file_path: Path) -> SessionTrajectory | None:
-        # Conversation ID is typically the folder name under brain/
+    def parse_session_file(
+        self,
+        file_path: Path,
+        since: str | None = None,
+        start_step: int = 0,
+    ) -> SessionTrajectory | None:
         conv_id = (
             file_path.parents[2].name
             if file_path.parent.name == "logs" and len(file_path.parents) >= 3
@@ -145,8 +162,17 @@ class AntigravityLogAdapter(AgentLogAdapter):
             file_path.stat().st_mtime, tz=UTC
         ).isoformat()
         model_routed: str = "gemini-3.7"
-        steps: list[TrajectoryStep] = []
+        all_steps: list[TrajectoryStep] = []
         pending_tool_calls: list[dict[str, Any]] = []
+
+        since_dt: datetime | None = None
+        if since:
+            try:
+                since_dt = datetime.fromisoformat(since)
+                if since_dt.tzinfo is None:
+                    since_dt = since_dt.replace(tzinfo=UTC)
+            except ValueError:
+                since_dt = None
 
         try:
             with open(file_path, "r", encoding="utf-8", errors="replace") as f:
@@ -162,19 +188,19 @@ class AntigravityLogAdapter(AgentLogAdapter):
                     if not isinstance(record, dict):
                         continue
 
+                    rec_created = record.get("created_at")
                     if (
-                        record.get("created_at")
+                        rec_created
                         and timestamp
                         == datetime.fromtimestamp(
                             file_path.stat().st_mtime, tz=UTC
                         ).isoformat()
                     ):
-                        timestamp = record["created_at"]
+                        timestamp = rec_created
 
                     rec_type = record.get("type")
                     status = record.get("status", "DONE")
 
-                    # Check model settings changes
                     content_str = str(record.get("content", ""))
                     if "Model Selection" in content_str:
                         if "Gemini" in content_str or "Flash" in content_str:
@@ -182,7 +208,6 @@ class AntigravityLogAdapter(AgentLogAdapter):
                         elif "Pro" in content_str:
                             model_routed = "gemini-3.7-pro"
 
-                    # Assistant Planner response containing tool calls
                     if rec_type == "PLANNER_RESPONSE":
                         raw_calls = record.get("tool_calls", [])
                         if isinstance(raw_calls, list):
@@ -196,10 +221,13 @@ class AntigravityLogAdapter(AgentLogAdapter):
                                             for k, v in t_args.items()
                                         }
                                     pending_tool_calls.append(
-                                        {"name": t_name, "input": t_args}
+                                        {
+                                            "name": t_name,
+                                            "input": t_args,
+                                            "created_at": rec_created,
+                                        }
                                     )
 
-                    # Tool result / observation step
                     elif rec_type in ("GENERIC", "TOOL_RESULT") or (
                         record.get("source") in ("MODEL", "SYSTEM")
                         and pending_tool_calls
@@ -224,9 +252,9 @@ class AntigravityLogAdapter(AgentLogAdapter):
                                 or observation.startswith("Error:")
                             )
 
-                            steps.append(
+                            all_steps.append(
                                 TrajectoryStep(
-                                    step_number=len(steps) + 1,
+                                    step_number=len(all_steps) + 1,
                                     tool_name=call_info["name"],
                                     tool_input=call_info["input"],
                                     observation=observation,
@@ -238,11 +266,18 @@ class AntigravityLogAdapter(AgentLogAdapter):
             print(f"Error reading Antigravity transcript {file_path}: {e}")
             return None
 
+        # Filter steps based on start_step and since timestamp
+        filtered_steps = all_steps
+        if start_step > 0 and start_step < len(all_steps):
+            filtered_steps = all_steps[start_step:]
+        elif start_step >= len(all_steps):
+            filtered_steps = []
+
         return SessionTrajectory(
             session_id=conv_id,
             timestamp=timestamp,
             model_routed=model_routed,
-            steps=steps,
+            steps=filtered_steps,
             final_status="success",
         )
 
@@ -260,7 +295,7 @@ class AntigravityLogAdapter(AgentLogAdapter):
                 step_number=2,
                 tool_name="run_command",
                 tool_input={"CommandLine": "uv run pytest"},
-                observation="55 passed in 2.1s",
+                observation="65 passed in 2.1s",
                 is_error=False,
                 latency_ms=120.0,
             ),

@@ -28,11 +28,16 @@ class MockCursorLogAdapter(AgentLogAdapter):
         return None
 
     def discover_unprocessed_sessions(
-        self, processed_records: set[str]
-    ) -> list[tuple[str, Path]]:
+        self, processed_state: dict[str, Any] | set[str]
+    ) -> list[tuple[str, Path, dict[str, Any] | None]]:
         return []
 
-    def parse_session_file(self, file_path: Path) -> SessionTrajectory | None:
+    def parse_session_file(
+        self,
+        file_path: Path,
+        since: str | None = None,
+        start_step: int = 0,
+    ) -> SessionTrajectory | None:
         return None
 
 

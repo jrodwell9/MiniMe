@@ -184,6 +184,93 @@ def test_push_patterns_multi_skill_pr_mode(mock_hub_and_project):
     for prop in res["proposals"]:
         assert f"proposal/skill-{prop['name']}-" in prop["branch"]
 
+    # Verify PR descriptions are self-contained
+    prop_a = next(p for p in res["proposals"] if p["name"] == "skill-a")
+    prop_b = next(p for p in res["proposals"] if p["name"] == "skill-b")
+
+    assert "skill-a" in prop_a["description"]
+    assert "skill-b" not in prop_a["description"]
+
+    assert "skill-b" in prop_b["description"]
+    assert "skill-a" not in prop_b["description"]
+
+
+def test_push_patterns_multi_skill_and_unclaimed_patterns_self_contained(
+    mock_hub_and_project,
+):
+    hub_dir, _ = mock_hub_and_project
+    manager = GitHubSyncManager(hub_dir=hub_dir)
+    manager.init_hub()
+
+    # Pattern A addressed by Skill A
+    pat_a = hub_dir / "global" / "wiki" / "patterns" / "pattern-a.md"
+    pat_a.parent.mkdir(parents=True, exist_ok=True)
+    pat_a.write_text(
+        "# Pattern A\n\n## Description\nDesc A\n## Recommended Fix\nFix A\n",
+        encoding="utf-8",
+    )
+
+    # Pattern B addressed by Skill B
+    pat_b = hub_dir / "global" / "wiki" / "patterns" / "pattern-b.md"
+    pat_b.write_text(
+        "# Pattern B\n\n## Description\nDesc B\n## Recommended Fix\nFix B\n",
+        encoding="utf-8",
+    )
+
+    # Pattern C unclaimed
+    pat_c = hub_dir / "global" / "wiki" / "patterns" / "pattern-c.md"
+    pat_c.write_text(
+        "# Pattern C\n\n## Description\nDesc C\n## Recommended Fix\nFix C\n",
+        encoding="utf-8",
+    )
+
+    # Skill A
+    skill_a = hub_dir / "global" / "skills" / "skill-a"
+    skill_a.mkdir(parents=True, exist_ok=True)
+    (skill_a / "SKILL.md").write_text(
+        "---\nname: skill-a\ndescription: Skill A\nstatus: active\npatterns_addressed: [pattern-a]\n---\nRules A\n",
+        encoding="utf-8",
+    )
+
+    # Skill B
+    skill_b = hub_dir / "global" / "skills" / "skill-b"
+    skill_b.mkdir(parents=True, exist_ok=True)
+    (skill_b / "SKILL.md").write_text(
+        "---\nname: skill-b\ndescription: Skill B\nstatus: active\npatterns_addressed: [pattern-b]\n---\nRules B\n",
+        encoding="utf-8",
+    )
+
+    res = manager.push_patterns(direct=False)
+    assert res["status"] == "success"
+    assert res["mode"] == "pr"
+    # Should produce 3 PRs: skill-a (with pat_a), skill-b (with pat_b), and patterns (with pat_c)
+    assert len(res["proposals"]) == 3
+
+    prop_a = next(p for p in res["proposals"] if p["name"] == "skill-a")
+    prop_b = next(p for p in res["proposals"] if p["name"] == "skill-b")
+    prop_c = next(p for p in res["proposals"] if p["name"] == "patterns")
+
+    # PR A: only skill-a and pattern-a
+    assert "skill-a" in prop_a["description"]
+    assert "pattern-a.md" in prop_a["description"]
+    assert "skill-b" not in prop_a["description"]
+    assert "pattern-b.md" not in prop_a["description"]
+    assert "pattern-c.md" not in prop_a["description"]
+
+    # PR B: only skill-b and pattern-b
+    assert "skill-b" in prop_b["description"]
+    assert "pattern-b.md" in prop_b["description"]
+    assert "skill-a" not in prop_b["description"]
+    assert "pattern-a.md" not in prop_b["description"]
+    assert "pattern-c.md" not in prop_b["description"]
+
+    # PR C: only pattern-c
+    assert "pattern-c.md" in prop_c["description"]
+    assert "skill-a" not in prop_c["description"]
+    assert "skill-b" not in prop_c["description"]
+    assert "pattern-a.md" not in prop_c["description"]
+    assert "pattern-b.md" not in prop_c["description"]
+
 
 def test_get_remote_owner_repo():
     manager = GitHubSyncManager(remote_url="https://github.com/user123/repo456.git")

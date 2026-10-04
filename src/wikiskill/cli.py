@@ -279,15 +279,38 @@ def main(argv: Sequence[str] | None = None) -> int:
         manager.init_hub()
         prune_flag = getattr(args, "prune", False)
         direct_flag = getattr(args, "direct", False)
-        if getattr(args, "pull", False):
+        p_dir = getattr(args, "project_dir", None) or os.getcwd()
+
+        pull_flag = getattr(args, "pull", False)
+        push_flag = getattr(args, "push", False)
+
+        # Default sync or explicit --pull: pull remote updates and sync hub -> project
+        if pull_flag or not push_flag:
             manager.pull(prune=prune_flag)
             print("Pulled latest updates from remote hub.")
-        p_dir = getattr(args, "project_dir", None) or os.getcwd()
-        if getattr(args, "push", False):
+            pull_res = manager.sync_hub_to_project(p_dir, prune=prune_flag)
+            print(
+                f"Synced hub to project: {len(pull_res['applied_skills'])} skills applied."
+            )
+            if prune_flag and pull_res.get("pruned_skills"):
+                print(f"Pruned local skills: {', '.join(pull_res['pruned_skills'])}")
+            if prune_flag and pull_res.get("pruned_patterns"):
+                print(
+                    f"Pruned local patterns: {', '.join(pull_res['pruned_patterns'])}"
+                )
+
+        if push_flag:
+            # 1. Ensure hub has latest remote main and project has merged updates
+            manager.pull(prune=prune_flag)
+            manager.sync_hub_to_project(p_dir, prune=prune_flag)
+
+            # 2. Promote any local project additions/edits to hub
             res = manager.sync_project_to_hub(p_dir, prune=prune_flag)
             print(
                 f"Promoted to global hub: {len(res['synced_patterns'])} patterns, {len(res['synced_skills'])} skills."
             )
+
+            # 3. Create PRs for true deltas
             push_res = manager.push_patterns(direct=direct_flag)
             if push_res.get("status") == "no_changes":
                 print("No changes to push to remote hub.")
@@ -323,11 +346,10 @@ def main(argv: Sequence[str] | None = None) -> int:
                         )
             else:
                 print("Pushed local updates directly to remote main.")
-        pull_res = manager.sync_hub_to_project(p_dir, prune=prune_flag)
-        if prune_flag and pull_res.get("pruned_skills"):
-            print(f"Pruned local skills: {', '.join(pull_res['pruned_skills'])}")
-        if prune_flag and pull_res.get("pruned_patterns"):
-            print(f"Pruned local patterns: {', '.join(pull_res['pruned_patterns'])}")
+
+            # 4. Re-sync hub to project
+            manager.sync_hub_to_project(p_dir, prune=prune_flag)
+
         return 0
 
     elif command == "daemon":

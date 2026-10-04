@@ -98,11 +98,14 @@ class WikiSkillHarness:
         self,
         since: str | None = None,
         session_file: Path | str | None = None,
+        start_step: int = 0,
         dry_run: bool = False,
     ) -> dict[str, Any]:
         """Execute self-evolution loop on the session transcript."""
         if session_file is not None:
-            trajectory = self.adapter.parse_session_file(Path(session_file))
+            trajectory = self.adapter.parse_session_file(
+                Path(session_file), since=since, start_step=start_step
+            )
         else:
             trajectory = self.adapter.get_latest_session_trajectory(since=since)
 
@@ -117,6 +120,18 @@ class WikiSkillHarness:
                 f"Processing session ID: {trajectory.session_id} "
                 f"(model: {trajectory.model_routed}, steps: {len(trajectory.steps)})"
             )
+
+        # If clean session with 0 steps (e.g. no new steps since last checkpoint), return clean_session
+        if not trajectory.steps:
+            return {
+                "status": "clean_session",
+                "session_id": trajectory.session_id,
+                "timestamp": trajectory.timestamp,
+                "model": trajectory.model_routed,
+                "steps_count": 0,
+                "patterns_created": [],
+                "proposals": [],
+            }
 
         # Step 1: Wiki Maintainer processes session trajectory
         current_wiki_index = self.wiki_manager.get_wiki_index()
@@ -140,6 +155,7 @@ class WikiSkillHarness:
             return {
                 "status": "dry_run",
                 "session_id": trajectory.session_id,
+                "timestamp": trajectory.timestamp,
                 "model": trajectory.model_routed,
                 "steps_count": len(trajectory.steps),
                 "wiki_updates": llm_wiki_response,
@@ -151,6 +167,7 @@ class WikiSkillHarness:
             return {
                 "status": "clean_session",
                 "session_id": trajectory.session_id,
+                "timestamp": trajectory.timestamp,
                 "model": trajectory.model_routed,
                 "steps_count": len(trajectory.steps),
                 "patterns_created": [],
@@ -169,6 +186,7 @@ class WikiSkillHarness:
         return {
             "status": "success",
             "session_id": trajectory.session_id,
+            "timestamp": trajectory.timestamp,
             "model": trajectory.model_routed,
             "steps_count": len(trajectory.steps),
             "patterns_created": [p["name"] for p in patterns_to_create],

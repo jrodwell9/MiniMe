@@ -1,6 +1,10 @@
 ---
 name: dependency-management
 description: Standards for adding dependencies and organizing package imports.
+status: active
+origin_session: in-flight
+patterns_addressed:
+  - missing-dependency-import-loop
 ---
 
 # Operational Rules

@@ -10,8 +10,8 @@ from .adapters import (
     sanitize_project_path,
 )
 from .daemon import WikiSkillDaemon
-from .dataclasses import SessionTrajectory, TrajectoryStep
 from .harness import WikiSkillHarness
+from .models import SessionTrajectory, TrajectoryStep
 from .skill_proposer import SkillProposer
 from .sync import GitHubSyncManager
 from .wiki_manager import WikiManager

@@ -1,13 +1,11 @@
 from pathlib import Path
 from unittest.mock import patch
 
-from wikiskill.dataclasses import SessionTrajectory, TrajectoryStep
 from wikiskill.harness import WikiSkillHarness
+from wikiskill.models import SessionTrajectory, TrajectoryStep
 
 
-@patch(
-    "wikiskill.claude_log_adapter.ClaudeCodeLogAdapter.get_latest_session_trajectory"
-)
+@patch("wikiskill.adapters.claude.ClaudeCodeLogAdapter.get_latest_session_trajectory")
 @patch("wikiskill.wiki_manager.WikiManager.call_llm_for_wiki_update")
 @patch("wikiskill.wiki_manager.WikiManager.process_llm_wiki_response")
 @patch("wikiskill.skill_proposer.SkillProposer.call_llm_for_skill_proposal")
@@ -24,7 +22,15 @@ def test_harness_post_session_flow(
         session_id="main-test-session",
         timestamp="2026-08-31T10:00:00Z",
         model_routed="claude-3-opus",
-        steps=[],
+        steps=[
+            TrajectoryStep(
+                step_number=1,
+                tool_name="Bash",
+                tool_input={"command": "pytest"},
+                observation="FAILED test",
+                is_error=True,
+            )
+        ],
         final_status="success",
     )
     mock_llm_wiki_update.return_value = {
