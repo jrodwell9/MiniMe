@@ -4,6 +4,7 @@
 1. **Never write implementation code without a spec.**
 2. **Never modify production code without a failing test.**
 3. **Loop containment:** Never run open-ended bash tasks; all actions follow deterministic check loops.
+4. **Documentation-only changes (e.g., README.md, comments) are exempt from spec and test loop requirements.
 
 ---
 
@@ -80,12 +81,12 @@ When given a task or issue, execute strictly in these four discrete phases. Do n
 
 `wikiskill` is packaged as an installable tool with CLI entrypoints `wikiskill` and `wikiskill-harness`.
 
-### 4.1 CLI Commands
+### 4.1 CLI Commands Reference
 
-#### Post-Session Evolution
-Run post-session evolution on the latest Claude Code transcript:
+#### 1. Post-Session Evolution (`post-session`)
+Run post-session evolution on the latest Claude Code transcript (with automated noise suppression for clean runs):
 ```bash
-uv run wikiskill post-session
+uv run wikiskill post-session [options]
 # or legacy flag:
 uv run wikiskill --post-session
 ```
@@ -98,22 +99,69 @@ Optional arguments:
 - `--dry-run`: Preview updates without writing files.
 - `--mock`: Run with synthetic trajectory.
 
-#### Project Initialization
+#### 2. Project Initialization (`init`)
 Scaffold `.claude/wiki/` and `.claude/skills/` in any repository:
 ```bash
 uv run wikiskill init [--project-dir <path>]
 ```
 
-#### Status Inspection
+#### 3. Status Inspection (`status`)
 Inspect active patterns and skills:
 ```bash
 uv run wikiskill status [--project-dir <path>]
 ```
 
+#### 4. Central Hub Setup (`setup-hub`)
+Initialize the central hub at `~/.claude/wikiskill-hub` for multi-workstation sync:
+```bash
+uv run wikiskill setup-hub --remote https://github.com/your-user/personal-wiki-skills.git
+```
+
+#### 5. Global Hub Synchronization & PR Gating (`sync`)
+Synchronize universal patterns and skills with central Git hub and candidate PRs:
+```bash
+# Propose local universal learnings via PR candidate branch
+uv run wikiskill sync --push
+
+# Push directly to main (bypass PR gate)
+uv run wikiskill sync --push --direct
+
+# Pull latest global skills from central hub
+uv run wikiskill sync --pull
+
+# Pull and prune local skills/patterns deleted or rejected upstream
+uv run wikiskill sync --pull --prune
+```
+
+#### 6. Background Watcher Daemon (`daemon`)
+Monitor all Claude Code project logs continuously in the background:
+```bash
+# Run continuous watcher (default interval: 300s)
+uv run wikiskill daemon
+
+# Run single scan pass across all projects and exit
+uv run wikiskill daemon --once
+
+# Custom interval (e.g. 60s)
+uv run wikiskill daemon --interval 60
+```
+
 ### 4.2 Programmatic Python API
 ```python
-from wikiskill import WikiSkillHarness
+from wikiskill import (
+    GitHubSyncManager,
+    WikiSkillDaemon,
+    WikiSkillHarness,
+)
 
+# 1. Post-Session Evolution
 harness = WikiSkillHarness(project_dir=".")
 result = harness.run_post_session(since=None, dry_run=False)
+
+# 2. Central Hub Synchronization
+sync_manager = GitHubSyncManager()
+sync_manager.init_hub()
+sync_manager.sync_project_to_hub(".", prune=True)
+sync_manager.sync_hub_to_project(".", prune=True)
 ```
+

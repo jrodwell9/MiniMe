@@ -1,11 +1,11 @@
 import argparse
 import json
+import os
 import sys
 from collections.abc import Sequence
 
 from .daemon import WikiSkillDaemon
 from .harness import WikiSkillHarness
-from .mcp import run_stdio_server
 from .sync import GitHubSyncManager
 
 
@@ -152,11 +152,6 @@ def build_parser() -> argparse.ArgumentParser:
         help="Custom location for skills directory.",
     )
 
-    # mcp subcommand
-    subparsers.add_parser(
-        "mcp", help="Run Model Context Protocol (MCP) server over stdio."
-    )
-
     # sync subcommand
     sync_parser = subparsers.add_parser(
         "sync", help="Sync local patterns and skills with central Git hub."
@@ -180,6 +175,16 @@ def build_parser() -> argparse.ArgumentParser:
         "--push",
         action="store_true",
         help="Push local updates to remote hub.",
+    )
+    sync_parser.add_argument(
+        "--prune",
+        action="store_true",
+        help="Prune local skills and patterns not present on central hub.",
+    )
+    sync_parser.add_argument(
+        "--direct",
+        action="store_true",
+        help="Bypass PR gate and push directly to main branch.",
     )
 
     # daemon subcommand
@@ -210,7 +215,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     # setup-hub subcommand
     setup_parser = subparsers.add_parser(
-        "setup-hub", help="Initialize central Git Hub and configure Claude Code MCP."
+        "setup-hub",
+        help="Initialize central Git Hub repository for multi-workstation sync.",
     )
     setup_parser.add_argument(
         "--remote",
@@ -238,11 +244,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         parser.print_help()
         return 0
 
-    if command == "mcp":
-        run_stdio_server()
-        return 0
-
-    elif command == "init":
+    if command == "init":
         harness = WikiSkillHarness(
             project_dir=getattr(args, "project_dir", None),
             wiki_dir=getattr(args, "wiki_dir", None),
@@ -275,19 +277,57 @@ def main(argv: Sequence[str] | None = None) -> int:
     elif command == "sync":
         manager = GitHubSyncManager(hub_dir=getattr(args, "hub_dir", None))
         manager.init_hub()
-        p_dir = getattr(args, "project_dir", None)
-        if p_dir:
-            res = manager.sync_project_to_hub(p_dir)
-            print(
-                f"Synced project '{res['project_slug']}' to hub: {len(res['synced_patterns'])} patterns, {len(res['synced_skills'])} skills."
-            )
-            manager.sync_hub_to_project(p_dir)
+        prune_flag = getattr(args, "prune", False)
+        direct_flag = getattr(args, "direct", False)
         if getattr(args, "pull", False):
-            manager.pull()
+            manager.pull(prune=prune_flag)
             print("Pulled latest updates from remote hub.")
+        p_dir = getattr(args, "project_dir", None) or os.getcwd()
         if getattr(args, "push", False):
-            manager.push_patterns()
-            print("Pushed local updates to remote hub.")
+            res = manager.sync_project_to_hub(p_dir, prune=prune_flag)
+            print(
+                f"Promoted to global hub: {len(res['synced_patterns'])} patterns, {len(res['synced_skills'])} skills."
+            )
+            push_res = manager.push_patterns(direct=direct_flag)
+            if push_res.get("status") == "no_changes":
+                print("No changes to push to remote hub.")
+            elif push_res.get("status") == "aborted":
+                print(push_res.get("message", "Push aborted."))
+                return 0
+            elif push_res.get("mode") == "pr":
+                proposals = push_res.get("proposals") or [push_res]
+                print(
+                    f"Created {len(proposals)} candidate proposal branch(es) and Pull Request(s):\n"
+                )
+                for prop in proposals:
+                    prop_name = prop.get("name", prop.get("branch", "proposal"))
+                    print(f"[Proposal] {prop_name}")
+                    print(f"   Branch: {prop.get('branch')}")
+                    if prop.get("description"):
+                        print("   --- Proposed Changes ---")
+                        for line in prop["description"].splitlines():
+                            print(f"   {line}")
+                        print("   ------------------------")
+                    if prop.get("pr_url"):
+                        if "/pull/" in prop["pr_url"]:
+                            print(
+                                f"   [PR] Successfully opened Pull Request: {prop['pr_url']}\n"
+                            )
+                        else:
+                            print(
+                                f"   [Web URL] Open Pull Request via Web: {prop['pr_url']}\n"
+                            )
+                    else:
+                        print(
+                            f"   Create a Pull Request on GitHub from branch '{prop.get('branch')}'.\n"
+                        )
+            else:
+                print("Pushed local updates directly to remote main.")
+        pull_res = manager.sync_hub_to_project(p_dir, prune=prune_flag)
+        if prune_flag and pull_res.get("pruned_skills"):
+            print(f"Pruned local skills: {', '.join(pull_res['pruned_skills'])}")
+        if prune_flag and pull_res.get("pruned_patterns"):
+            print(f"Pruned local patterns: {', '.join(pull_res['pruned_patterns'])}")
         return 0
 
     elif command == "daemon":
@@ -306,18 +346,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         manager.init_hub(remote_url=getattr(args, "remote", None))
         print(f"Initialized central WikiSkill Hub at: {manager.hub_dir}")
-        print(
-            "\nTo configure Claude Code MCP sidecar, add this to your claude_desktop_config.json or .claude.json:"
-        )
-        mcp_config = {
-            "mcpServers": {
-                "wikiskill": {
-                    "command": "uvx",
-                    "args": ["wikiskill", "mcp"],
-                }
-            }
-        }
-        print(json.dumps(mcp_config, indent=2))
+        remote_display = getattr(args, "remote", None)
+        if remote_display:
+            print(f"Linked remote origin: {remote_display}")
+        print("\nWikiSkill plugin is active in .claude/skills/wikiskill/.")
         return 0
 
     elif command == "post-session":

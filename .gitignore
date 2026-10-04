@@ -208,3 +208,7 @@ __marimo__/
 
 # Claude raw data
 .claude/raw/*
+
+# Antigravity local junction
+.agents/
+

@@ -1,0 +1,8 @@
+{
+  "name": "wikiskill",
+  "version": "0.1.0",
+  "description": "Compounding knowledge and self-evolving skill harness for Claude Code and Antigravity.",
+  "skills": [
+    ".claude/skills/wikiskill"
+  ]
+}

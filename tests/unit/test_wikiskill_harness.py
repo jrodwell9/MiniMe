@@ -1,6 +1,7 @@
+from pathlib import Path
 from unittest.mock import patch
 
-from wikiskill.dataclasses import SessionTrajectory
+from wikiskill.dataclasses import SessionTrajectory, TrajectoryStep
 from wikiskill.harness import WikiSkillHarness
 
 
@@ -11,9 +12,7 @@ from wikiskill.harness import WikiSkillHarness
 @patch("wikiskill.wiki_manager.WikiManager.process_llm_wiki_response")
 @patch("wikiskill.skill_proposer.SkillProposer.call_llm_for_skill_proposal")
 @patch("wikiskill.skill_proposer.SkillProposer.apply_skill_proposal")
-@patch("wikiskill.wiki_manager.WikiManager._write_file")
 def test_harness_post_session_flow(
-    mock_write_file,
     mock_apply_skill,
     mock_skill_proposal,
     mock_process_wiki,
@@ -64,3 +63,48 @@ def test_harness_post_session_flow(
     mock_process_wiki.assert_called_once()
     mock_skill_proposal.assert_called_once()
     mock_apply_skill.assert_called_once()
+
+
+def test_harness_clean_session_does_not_create_skills_or_patterns(tmp_path: Path):
+    wiki_path = tmp_path / ".claude" / "wiki"
+    skills_path = tmp_path / ".claude" / "skills"
+
+    harness = WikiSkillHarness(
+        project_dir=str(tmp_path),
+        wiki_dir=str(wiki_path),
+        skills_dir=str(skills_path),
+        mock=False,
+    )
+    harness.init_project()
+
+    clean_trajectory = SessionTrajectory(
+        session_id="clean-test-session-123",
+        timestamp="2026-10-03T12:00:00Z",
+        model_routed="claude-3-7-sonnet",
+        steps=[
+            TrajectoryStep(
+                step_number=1,
+                tool_name="Read",
+                tool_input={"file_path": "main.py"},
+                observation="print('clean')",
+                is_error=False,
+            )
+        ],
+    )
+
+    with patch.object(
+        harness.adapter, "get_latest_session_trajectory", return_value=clean_trajectory
+    ):
+        result = harness.run_post_session()
+
+    assert result["status"] == "clean_session"
+    assert result["patterns_created"] == []
+    assert result["proposals"] == []
+
+    # Verify no pattern markdown files were created
+    pattern_files = list((wiki_path / "patterns").glob("*.md"))
+    assert len(pattern_files) == 0
+
+    # Verify no skill directories were created
+    skill_dirs = [d for d in skills_path.iterdir() if d.is_dir()]
+    assert len(skill_dirs) == 0

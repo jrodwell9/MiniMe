@@ -98,6 +98,8 @@ class WikiSkillHarness:
             trajectory, current_wiki_index or ""
         )
 
+        patterns_to_create = llm_wiki_response.get("create_patterns", [])
+
         # Step 2: Skill Proposer proposes skill edits based on updated wiki state
         updated_wiki_context = (
             f"Index: {self.wiki_manager.get_wiki_index() or 'N/A'}\n"
@@ -105,7 +107,7 @@ class WikiSkillHarness:
         )
         proposals = self.skill_proposer.call_llm_for_skill_proposal(
             updated_wiki_context,
-            patterns=llm_wiki_response.get("create_patterns"),
+            patterns=patterns_to_create,
         )
 
         if dry_run:
@@ -118,27 +120,24 @@ class WikiSkillHarness:
                 "proposals": proposals,
             }
 
+        # If clean session with 0 new patterns and 0 proposals, exit cleanly without writing dummy files
+        if not patterns_to_create and not proposals:
+            return {
+                "status": "clean_session",
+                "session_id": trajectory.session_id,
+                "model": trajectory.model_routed,
+                "steps_count": len(trajectory.steps),
+                "patterns_created": [],
+                "proposals": [],
+            }
+
         # Apply Wiki updates
         self.wiki_manager.process_llm_wiki_response(llm_wiki_response)
 
-        # Step 3: Apply skills and append audit log
+        # Step 3: Apply skills with frontmatter metadata
         for proposal in proposals:
-            self.skill_proposer.apply_skill_proposal(proposal)
-
-            rules_list = "\n".join(f"  + {r}" for r in proposal.get("rules", []))
-            impact_entry = f"""
-## Session {trajectory.session_id}
-- Target Skill: `{proposal["name"]}`
-- Proposal Action: `{proposal["action"]}`
-- Patterns Addressed: {", ".join(proposal.get("patterns_addressed", []))}
-- Acceptance Outcome: Accepted
-- Rules Applied:
-```markdown
-{rules_list}
-```
-"""
-            self.wiki_manager._write_file(
-                self.wiki_manager.skill_impact_path, impact_entry, mode="a"
+            self.skill_proposer.apply_skill_proposal(
+                proposal, session_id=trajectory.session_id
             )
 
         return {
@@ -146,8 +145,6 @@ class WikiSkillHarness:
             "session_id": trajectory.session_id,
             "model": trajectory.model_routed,
             "steps_count": len(trajectory.steps),
-            "patterns_created": [
-                p["name"] for p in llm_wiki_response.get("create_patterns", [])
-            ],
+            "patterns_created": [p["name"] for p in patterns_to_create],
             "proposals": proposals,
         }

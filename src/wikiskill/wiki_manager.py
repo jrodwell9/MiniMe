@@ -13,14 +13,10 @@ class WikiManager:
         self.skill_impact_path = os.path.join(base_path, "skill-impact.md")
 
     def initialize_wiki(self) -> None:
-        """Ensure wiki directory and core index/log files exist."""
+        """Ensure wiki directory and core index file exist."""
         os.makedirs(self.patterns_path, exist_ok=True)
         if not os.path.exists(self.index_path):
             self._write_file(self.index_path, "# Wiki Pattern Index\n\n")
-        if not os.path.exists(self.logs_path):
-            self._write_file(self.logs_path, "# Wiki Evolution Log\n\n")
-        if not os.path.exists(self.skill_impact_path):
-            self._write_file(self.skill_impact_path, "# Skill Impact Audit Log\n\n")
 
     def _read_file(self, file_path: str) -> str | None:
         try:
@@ -54,6 +50,8 @@ class WikiManager:
             print(f"Warning: Pattern file {file_path} not found for update.")
 
     def update_index(self, additions: list[str]):
+        if not additions:
+            return
         current_content = self._read_file(self.index_path) or ""
         if current_content.endswith("\n"):
             current_content = current_content.rstrip("\n")
@@ -203,26 +201,16 @@ Review failure logs, make minimal targeted code adjustments, and re-run tests un
             )
 
         if not create_patterns:
-            content = f"""# Clean Execution Pattern
-
-## Problem
-No critical execution errors detected in session {trajectory.session_id}.
-
-## Root Cause
-Commands and tool calls executed cleanly across {len(trajectory.steps)} steps.
-
-## Fix
-Continue standard TDD workflow.
-"""
-            create_patterns.append(
-                {
-                    "name": "clean-execution-pattern",
-                    "content": content,
-                }
+            log_entry = (
+                f"Session {trajectory.session_id}: Analyzed {len(trajectory.steps)} steps "
+                f"({len(error_steps)} errors); clean execution, no new patterns required."
             )
-            additions.append(
-                f"- [clean-execution-pattern](wiki/patterns/clean-execution-pattern.md): Clean session execution for session {trajectory.session_id}."
-            )
+            return {
+                "create_patterns": [],
+                "update_patterns": [],
+                "update_index": {"additions": []},
+                "append_log": log_entry,
+            }
 
         pattern_names = [p["name"] for p in create_patterns]
         log_entry = (

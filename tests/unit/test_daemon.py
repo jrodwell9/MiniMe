@@ -67,7 +67,7 @@ def test_daemon_scan_and_process_sessions(mock_claude_environment):
     assert results[0]["project_slug"] == proj_slug
 
     # Verify session is marked as processed
-    assert "sess-1234" in daemon.processed_sessions
+    assert f"{proj_slug}/sess-1234" in daemon.processed_sessions
 
     # Running scan again should skip already processed session
     second_results = daemon.scan_and_process_sessions()

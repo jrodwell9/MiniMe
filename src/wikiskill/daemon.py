@@ -15,9 +15,7 @@ class WikiSkillDaemon:
         hub_dir: Path | str | None = None,
         interval: int = 300,
     ):
-        self.claude_dir = Path(
-            os.path.expanduser(claude_dir or "~/.claude")
-        ).resolve()
+        self.claude_dir = Path(os.path.expanduser(claude_dir or "~/.claude")).resolve()
         self.hub_dir = Path(
             os.path.expanduser(hub_dir or "~/.claude/wikiskill-hub")
         ).resolve()
@@ -64,41 +62,38 @@ class WikiSkillDaemon:
             jsonl_files = list(proj_folder.glob("*.jsonl"))
             for jsonl_file in jsonl_files:
                 session_id = jsonl_file.stem
-                if session_id in self.processed_sessions:
+                record_key = f"{proj_folder.name}/{session_id}"
+                if (
+                    record_key in self.processed_sessions
+                    or session_id in self.processed_sessions
+                ):
                     continue
 
                 # Process this session
                 try:
-                    target_project_dir = (
-                        self.hub_dir / "projects" / proj_folder.name
-                    )
-                    target_wiki = target_project_dir / "wiki"
-                    target_skills = target_project_dir / "skills"
-
                     harness = WikiSkillHarness(
-                        project_dir=target_project_dir,
-                        wiki_dir=target_wiki,
-                        skills_dir=target_skills,
+                        project_dir=self.hub_dir,
+                        wiki_dir=self.hub_dir / "global" / "wiki",
+                        skills_dir=self.hub_dir / "global" / "skills",
                         claude_dir=self.claude_dir,
                     )
                     harness.adapter.project_path = proj_folder
 
                     res = harness.run_post_session()
-                    if res.get("status") == "success":
-                        self.sync_manager.sync_project_to_hub(
-                            target_project_dir
+                    if res.get("status") in ("success", "clean_session"):
+                        processed_results.append(
+                            {
+                                "session_id": session_id,
+                                "project_slug": proj_folder.name,
+                                "patterns": res.get("patterns_created", []),
+                            }
                         )
-                        processed_results.append({
-                            "session_id": session_id,
-                            "project_slug": proj_folder.name,
-                            "patterns": res.get("patterns_created", []),
-                        })
-                    self.processed_sessions.add(session_id)
+                    self.processed_sessions.add(record_key)
                 except (OSError, ValueError, KeyError, json.JSONDecodeError) as e:
                     print(
                         f"Error processing session {session_id} in {proj_folder.name}: {e}"
                     )
-                    self.processed_sessions.add(session_id)
+                    self.processed_sessions.add(record_key)
 
         if processed_results:
             self._save_state()
@@ -117,4 +112,3 @@ class WikiSkillDaemon:
             if once:
                 break
             time.sleep(self.interval)
-

@@ -21,8 +21,7 @@ def wiki_manager(tmp_path):
 def test_wiki_manager_init(wiki_manager, tmp_path):
     assert wiki_manager.base_path == str(tmp_path / ".claude" / "wiki")
     assert os.path.exists(wiki_manager.index_path)
-    assert os.path.exists(wiki_manager.logs_path)
-    assert os.path.exists(wiki_manager.skill_impact_path)
+    assert os.path.exists(wiki_manager.patterns_path)
 
 
 def test_wiki_manager_read_file_success(wiki_manager):
@@ -121,6 +120,38 @@ def test_wiki_manager_call_llm_for_wiki_update_extracts_real_patterns(wiki_manag
     assert "unprefixed-python-runner-loop" in pattern_names
     assert len(response["update_index"]["additions"]) >= 2
     assert "test-session-patterns" in response["append_log"]
+
+
+def test_wiki_manager_clean_session_produces_no_patterns(wiki_manager):
+    trajectory = SessionTrajectory(
+        session_id="clean-test-session",
+        timestamp="2026-10-03T12:00:00Z",
+        model_routed="claude-3-7-sonnet",
+        steps=[
+            TrajectoryStep(
+                step_number=1,
+                tool_name="Read",
+                tool_input={"file_path": "app.py"},
+                observation="def foo(): pass",
+                is_error=False,
+                latency_ms=10.0,
+            ),
+            TrajectoryStep(
+                step_number=2,
+                tool_name="Bash",
+                tool_input={"command": "uv run pytest"},
+                observation="1 passed in 0.02s",
+                is_error=False,
+                latency_ms=25.0,
+            ),
+        ],
+        final_status="success",
+    )
+
+    response = wiki_manager.call_llm_for_wiki_update(trajectory, "Initial Index\n")
+    assert len(response["create_patterns"]) == 0
+    assert len(response["update_index"]["additions"]) == 0
+    assert "clean execution" in response["append_log"]
 
 
 def test_wiki_manager_process_llm_wiki_response_full(wiki_manager, tmp_path):

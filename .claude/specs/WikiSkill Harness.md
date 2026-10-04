@@ -69,43 +69,31 @@ Executes the self-evolution loop on the latest session transcript for the target
 
 #### 2. `init`
 Scaffolds the `.claude/wiki/` (index.md, logs.md, skill-impact.md, patterns/) and `.claude/skills/` directories in the target project.
-- **Flags**:
-  - `--project-dir <path>`: Target project directory (default: current working directory).
 
 #### 3. `status`
 Inspects and displays active wiki patterns and generated skills for the project.
-- **Flags**:
-  - `--project-dir <path>`: Target project directory (default: current working directory).
 
 ---
 
 ## 4. Acceptance Criteria (Given / When / Then)
 
-### 4.1 CLI Argument Parsing & Command Routing
-1. **Post-Session Execution**:
-   - **Given** an installed `wikiskill` package,
-   - **When** `wikiskill post-session --mock` or `wikiskill --post-session --mock` is run,
-   - **Then** the harness executes the post-session flow using mock trajectory and exits with code 0.
+### 4.1 Signal Gating & Noise Suppression
+1. **Clean Session Handling (No Jargon / No Dummy Skills)**:
+   - **Given** a session trajectory with 0 errors or no recurring failure loops,
+   - **When** `wiki_manager.call_llm_for_wiki_update(trajectory)` is called,
+   - **Then** `create_patterns` is empty (`[]`), `update_index["additions"]` is empty (`[]`), and a clean execution note is appended to `wiki/logs.md`.
+   - **When** `skill_proposer.call_llm_for_skill_proposal(wiki_context, patterns=[])` is called,
+   - **Then** `proposals` is empty (`[]`), and no skill files or pattern files are created on disk.
 
-2. **Since Filtering**:
-   - **Given** a timestamp filter `--since 2026-08-31T12:00:00Z`,
-   - **When** `wikiskill post-session --since 2026-08-31T12:00:00Z` is run,
-   - **Then** only sessions modified at or after that timestamp are processed.
+2. **Actionable Failure Pattern Handling**:
+   - **Given** a session trajectory with genuine tool errors (e.g. `Edit` string mismatches or `Bash` command not found),
+   - **When** `harness.run_post_session()` is executed,
+   - **Then** specific pattern files (e.g. `edit-string-mismatch-loop.md`) and operational skills (e.g. `file-editing`) are generated.
 
-3. **Dry-Run Mode**:
-   - **Given** `--dry-run` flag is passed,
-   - **When** `wikiskill post-session --mock --dry-run` is run,
-   - **Then** pattern updates and skill proposals are printed but no files are created or modified on disk.
-
-4. **Multi-Repository Path Overrides**:
+3. **Multi-Repository Path Overrides**:
    - **Given** `--project-dir <other_repo_path>`,
    - **When** `wikiskill post-session --project-dir <other_repo_path>` is run,
    - **Then** the adapter resolves the slug for `<other_repo_path>` and updates `<other_repo_path>/.claude/wiki` and `<other_repo_path>/.claude/skills`.
-
-5. **Init Scaffolding**:
-   - **Given** a clean workspace without `.claude/wiki`,
-   - **When** `wikiskill init` is run,
-   - **Then** `.claude/wiki/index.md`, `logs.md`, `skill-impact.md`, and `patterns/` are created.
 
 ---
 

@@ -6,7 +6,7 @@ build-backend = "hatchling.build"
 name = "wikiskill"
 version = "0.1.0"
 description = "Self-evolving skill harness and pattern wiki for Claude Code agent sessions"
-readme = "README.md"
+readme = "src/wikiskill/README.md"
 requires-python = ">=3.12"
 dependencies = [
     "requests>=2.31.0",

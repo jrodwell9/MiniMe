@@ -7,3 +7,4 @@
 - [unprefixed-python-runner-loop](wiki/patterns/unprefixed-python-runner-loop.md): Command not found when running python tools. Cause: bare invocation without virtualenv. Fix: prefix with 'uv run <command>'.
 - [missing-dependency-import-loop](wiki/patterns/missing-dependency-import-loop.md): ModuleNotFoundError during execution. Cause: missing package or path issue. Fix: add via uv and align root package imports.
 - [test-assertion-failure-loop](wiki/patterns/test-assertion-failure-loop.md): Test assertion failed. Cause: contract mismatch. Fix: inspect test failure and apply targeted minimal patch.
+- [cross-agent-skill-discovery](wiki/patterns/cross-agent-skill-discovery.md): Incompatible skill search paths between Claude Code (.claude/skills) and Antigravity (.agents/skills). Cause: disparate agent directory standards. Fix: create NTFS directory junction or symlink and ignore alias in .gitignore.

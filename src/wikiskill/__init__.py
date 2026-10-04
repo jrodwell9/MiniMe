@@ -6,7 +6,6 @@ from .claude_log_adapter import ClaudeCodeLogAdapter, sanitize_project_path
 from .daemon import WikiSkillDaemon
 from .dataclasses import SessionTrajectory, TrajectoryStep
 from .harness import WikiSkillHarness
-from .mcp import get_active_skills, lookup_pattern, record_reflection
 from .skill_proposer import SkillProposer
 from .sync import GitHubSyncManager
 from .wiki_manager import WikiManager
@@ -22,9 +21,5 @@ __all__ = [
     "WikiManager",
     "WikiSkillDaemon",
     "WikiSkillHarness",
-    "get_active_skills",
-    "lookup_pattern",
-    "record_reflection",
     "sanitize_project_path",
 ]
-
