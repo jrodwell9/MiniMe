@@ -99,6 +99,14 @@ class GitHubSyncManager:
         if not (self.hub_dir / ".git").exists():
             self._run_git(["init", "-b", "main"])
 
+        # Ensure git author identity is configured for commits (e.g. in CI environments)
+        name_code, name_val = self._run_git(["config", "user.name"])
+        if name_code != 0 or not name_val:
+            self._run_git(["config", "user.name", "WikiSkill Hub"])
+        email_code, email_val = self._run_git(["config", "user.email"])
+        if email_code != 0 or not email_val:
+            self._run_git(["config", "user.email", "wikiskill@localhost"])
+
         # Create initial commit if no commits exist yet
         code, _ = self._run_git(["rev-parse", "--verify", "HEAD"])
         if code != 0:

@@ -443,3 +443,48 @@ def test_push_patterns_multiline_yaml_patterns_addressed(mock_hub_and_project):
     assert len(res["proposals"]) == 1
     assert res["proposals"][0]["name"] == "linked-skill"
     assert "linked-pattern.md" in res["description"]
+
+
+def test_push_patterns_multi_skill_without_global_git_config(
+    mock_hub_and_project, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    empty_gitconfig = tmp_path / "empty_gitconfig"
+    empty_gitconfig.write_text("", encoding="utf-8")
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(empty_gitconfig))
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+    for var in (
+        "GIT_AUTHOR_NAME",
+        "GIT_AUTHOR_EMAIL",
+        "GIT_COMMITTER_NAME",
+        "GIT_COMMITTER_EMAIL",
+        "EMAIL",
+    ):
+        monkeypatch.delenv(var, raising=False)
+
+    hub_dir, _ = mock_hub_and_project
+    manager = GitHubSyncManager(hub_dir=hub_dir)
+    manager.init_hub()
+
+    skill_a = hub_dir / "global" / "skills" / "skill-a"
+    skill_a.mkdir(parents=True, exist_ok=True)
+    (skill_a / "SKILL.md").write_text(
+        "---\nname: skill-a\ndescription: Skill A\nstatus: active\n---\nRules A\n",
+        encoding="utf-8",
+    )
+
+    skill_b = hub_dir / "global" / "skills" / "skill-b"
+    skill_b.mkdir(parents=True, exist_ok=True)
+    (skill_b / "SKILL.md").write_text(
+        "---\nname: skill-b\ndescription: Skill B\nstatus: active\n---\nRules B\n",
+        encoding="utf-8",
+    )
+
+    res = manager.push_patterns(direct=False)
+    assert res["status"] == "success"
+    prop_a = next(p for p in res["proposals"] if p["name"] == "skill-a")
+    prop_b = next(p for p in res["proposals"] if p["name"] == "skill-b")
+    assert "skill-a" in prop_a["description"]
+    assert "skill-b" not in prop_a["description"]
+    assert "skill-b" in prop_b["description"]
+    assert "skill-a" not in prop_b["description"]
+
