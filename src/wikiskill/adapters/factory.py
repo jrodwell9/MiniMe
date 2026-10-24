@@ -41,7 +41,7 @@ class AgentLogAdapterFactory:
                 inst = cls._registry[name](**kwargs)
                 if inst.is_available():
                     available.append(inst)
-            except (OSError, TypeError, ValueError):
+            except OSError, TypeError, ValueError:
                 continue
         return available
 

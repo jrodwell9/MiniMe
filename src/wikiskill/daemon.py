@@ -65,7 +65,7 @@ class WikiSkillDaemon:
                     return data
                 if isinstance(data, list):
                     return {k: {"mtime": 0.0, "step_count": 0} for k in data}
-            except (json.JSONDecodeError, OSError):
+            except json.JSONDecodeError, OSError:
                 pass
         return {}
 

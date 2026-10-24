@@ -575,7 +575,7 @@ description: {local_fm.get("description", dest_fm.get("description", ""))}
                         )
                         return False, "missing_gh"
                     return True, "web"
-                except (EOFError, KeyboardInterrupt):
+                except EOFError, KeyboardInterrupt:
                     return False, "missing_gh"
             else:
                 return True, "web"
@@ -636,7 +636,7 @@ description: {local_fm.get("description", dest_fm.get("description", ""))}
                     )
                     return False, "unauthenticated"
                 return True, "web"
-            except (EOFError, KeyboardInterrupt):
+            except EOFError, KeyboardInterrupt:
                 return False, "unauthenticated"
         else:
             return True, "web"

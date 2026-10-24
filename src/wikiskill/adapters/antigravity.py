@@ -17,7 +17,7 @@ def _clean_antigravity_arg(val: Any) -> Any:
         ):
             try:
                 return json.loads(val_str)
-            except (json.JSONDecodeError, ValueError):
+            except json.JSONDecodeError, ValueError:
                 return val_str[1:-1]
         return val_str
     if isinstance(val, dict):
