@@ -30,10 +30,10 @@ jobs:
         uv sync --group dev
     - name: Lint
       run: |
-        ruff check
+        uv run ruff check
     - name: Type Check
       run: |
-        ty check
+        uv run ty check
     - name: Test with pytest
       run: |
-        pytest
+        uv run pytest
