@@ -302,3 +302,189 @@ def test_create_pull_request_gh_cli(monkeypatch):
     )
     assert pr_url == "https://github.com/user123/repo456/pull/99"
 
+
+def test_create_pull_request_web_fallback_accept(monkeypatch):
+    manager = GitHubSyncManager(remote_url="https://github.com/user123/repo456.git")
+    monkeypatch.setattr("shutil.which", lambda cmd: None)
+    monkeypatch.setattr("builtins.input", lambda prompt="": "y")
+
+    import sys
+
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: True)
+
+    pr_url = manager._create_pull_request(
+        target_branch="proposal/skills-1",
+        title="Evolution Proposal",
+        body="Description",
+        interactive=True,
+    )
+    assert pr_url is not None
+    assert (
+        "https://github.com/user123/repo456/compare/main...proposal/skills-1" in pr_url
+    )
+    assert "expand=1" in pr_url
+
+
+def test_create_pull_request_web_fallback_deny(monkeypatch):
+    manager = GitHubSyncManager(remote_url="https://github.com/user123/repo456.git")
+    monkeypatch.setattr("shutil.which", lambda cmd: None)
+    monkeypatch.setattr("builtins.input", lambda prompt="": "n")
+
+    import sys
+
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: True)
+
+    pr_url = manager._create_pull_request(
+        target_branch="proposal/skills-1",
+        title="Evolution Proposal",
+        body="Description",
+        interactive=True,
+    )
+    assert pr_url is None
+
+
+def test_push_patterns_aborted_when_user_denies_web_fallback(
+    mock_hub_and_project, monkeypatch
+):
+    hub_dir, _ = mock_hub_and_project
+    manager = GitHubSyncManager(hub_dir=hub_dir)
+    manager.init_hub()
+
+    # Create a new skill in hub
+    skill_dir = hub_dir / "global" / "skills" / "test-abort-skill"
+    skill_dir.mkdir(parents=True, exist_ok=True)
+    (skill_dir / "SKILL.md").write_text(
+        "---\nname: test-abort-skill\n---\nRules", encoding="utf-8"
+    )
+
+    monkeypatch.setattr("shutil.which", lambda cmd: None)
+    monkeypatch.setattr("builtins.input", lambda prompt="": "n")
+
+    import sys
+
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: True)
+
+    res = manager.push_patterns(direct=False, interactive=True)
+    assert res["status"] == "aborted"
+    assert res["success"] is False
+
+    # Verify no candidate branches were created
+    _, branches = manager._run_git(["branch"])
+    assert "proposal/" not in branches
+
+
+def test_parse_frontmatter():
+    # Empty / non-frontmatter
+    assert _parse_frontmatter("No frontmatter") == {}
+    assert _parse_frontmatter("---\n---") == {}
+
+    # Multiline list
+    content_multiline = """---
+name: cross-agent-skill-linking
+description: Standards for sharing and linking skills across different agent harnesses
+status: active
+origin_session: in-flight
+patterns_addressed:
+  - cross-agent-skill-discovery
+  - second-pattern
+---
+# Rules
+"""
+    parsed = _parse_frontmatter(content_multiline)
+    assert parsed["name"] == "cross-agent-skill-linking"
+    assert "Standards for sharing" in parsed["description"]
+    assert parsed["status"] == "active"
+    assert parsed["origin_session"] == "in-flight"
+    assert parsed["patterns_addressed"] == [
+        "cross-agent-skill-discovery",
+        "second-pattern",
+    ]
+
+    # Inline list and quotes
+    content_inline = """---
+name: 'test-skill'
+patterns: ["pat1", "pat2"]
+---
+Body
+"""
+    parsed_inline = _parse_frontmatter(content_inline)
+    assert parsed_inline["name"] == "test-skill"
+    assert parsed_inline["patterns"] == ["pat1", "pat2"]
+
+
+def test_push_patterns_multiline_yaml_patterns_addressed(mock_hub_and_project):
+    hub_dir, _ = mock_hub_and_project
+    manager = GitHubSyncManager(hub_dir=hub_dir)
+    manager.init_hub()
+
+    # Create pattern
+    pat_file = hub_dir / "global" / "wiki" / "patterns" / "linked-pattern.md"
+    pat_file.parent.mkdir(parents=True, exist_ok=True)
+    pat_file.write_text(
+        "# Linked Pattern\n\n## Description\nPattern description\n",
+        encoding="utf-8",
+    )
+
+    # Create skill referencing pattern via multiline YAML list
+    skill_dir = hub_dir / "global" / "skills" / "linked-skill"
+    skill_dir.mkdir(parents=True, exist_ok=True)
+    (skill_dir / "SKILL.md").write_text(
+        "---\nname: linked-skill\ndescription: Linked skill\npatterns_addressed:\n  - linked-pattern\n---\nRules\n",
+        encoding="utf-8",
+    )
+
+    res = manager.push_patterns(
+        commit_message="Test multiline PR push",
+        direct=False,
+    )
+    assert res["status"] == "success"
+    assert res["mode"] == "pr"
+    # Exactly one proposal for the skill, bundled with the pattern (no standalone patterns PR)
+    assert len(res["proposals"]) == 1
+    assert res["proposals"][0]["name"] == "linked-skill"
+    assert "linked-pattern.md" in res["description"]
+
+
+def test_push_patterns_multi_skill_without_global_git_config(
+    mock_hub_and_project, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    empty_gitconfig = tmp_path / "empty_gitconfig"
+    empty_gitconfig.write_text("", encoding="utf-8")
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(empty_gitconfig))
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+    for var in (
+        "GIT_AUTHOR_NAME",
+        "GIT_AUTHOR_EMAIL",
+        "GIT_COMMITTER_NAME",
+        "GIT_COMMITTER_EMAIL",
+        "EMAIL",
+    ):
+        monkeypatch.delenv(var, raising=False)
+
+    hub_dir, _ = mock_hub_and_project
+    manager = GitHubSyncManager(hub_dir=hub_dir)
+    manager.init_hub()
+
+    skill_a = hub_dir / "global" / "skills" / "skill-a"
+    skill_a.mkdir(parents=True, exist_ok=True)
+    (skill_a / "SKILL.md").write_text(
+        "---\nname: skill-a\ndescription: Skill A\nstatus: active\n---\nRules A\n",
+        encoding="utf-8",
+    )
+
+    skill_b = hub_dir / "global" / "skills" / "skill-b"
+    skill_b.mkdir(parents=True, exist_ok=True)
+    (skill_b / "SKILL.md").write_text(
+        "---\nname: skill-b\ndescription: Skill B\nstatus: active\n---\nRules B\n",
+        encoding="utf-8",
+    )
+
+    res = manager.push_patterns(direct=False)
+    assert res["status"] == "success"
+    prop_a = next(p for p in res["proposals"] if p["name"] == "skill-a")
+    prop_b = next(p for p in res["proposals"] if p["name"] == "skill-b")
+    assert "skill-a" in prop_a["description"]
+    assert "skill-b" not in prop_a["description"]
+    assert "skill-b" in prop_b["description"]
+    assert "skill-a" not in prop_b["description"]
+
