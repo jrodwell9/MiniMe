@@ -1,8 +1,15 @@
 import os
 from pathlib import Path
+from unittest.mock import MagicMock
 
+import dspy
 import pytest
 
+from wikiskill.llm import (
+    LLMConfigurationError,
+    PatternEntry,
+    WikiUpdateOutput,
+)
 from wikiskill.models import SessionTrajectory, TrajectoryStep
 from wikiskill.wiki_manager import WikiManager
 
@@ -15,13 +22,91 @@ def wiki_manager(tmp_path):
     (wiki_path / "index.md").write_text("Initial Index\n")
     (wiki_path / "logs.md").write_text("Initial Log\n")
     (wiki_path / "skill-impact.md").write_text("Initial Impact\n")
-    return WikiManager(base_path=str(wiki_path))
+    return WikiManager(base_path=str(wiki_path), mock=True)
 
 
 def test_wiki_manager_init(wiki_manager, tmp_path):
     assert wiki_manager.base_path == str(tmp_path / ".claude" / "wiki")
     assert os.path.exists(wiki_manager.index_path)
     assert os.path.exists(wiki_manager.patterns_path)
+
+
+def test_wiki_manager_requires_llm_when_not_mock_on_errors(tmp_path, monkeypatch):
+    for key in (
+        "WIKISKILL_MODEL",
+        "ANTHROPIC_API_KEY",
+        "GEMINI_API_KEY",
+        "GOOGLE_API_KEY",
+        "OPENAI_API_KEY",
+    ):
+        monkeypatch.delenv(key, raising=False)
+
+    manager = WikiManager(base_path=str(tmp_path / ".claude" / "wiki"), mock=False)
+    trajectory = SessionTrajectory(
+        session_id="err-session",
+        timestamp="2026-10-24T12:00:00Z",
+        model_routed="claude-3-7-sonnet",
+        steps=[
+            TrajectoryStep(
+                step_number=1,
+                tool_name="Bash",
+                tool_input={"command": "pytest"},
+                observation="command not found",
+                is_error=True,
+            )
+        ],
+    )
+    with pytest.raises(LLMConfigurationError):
+        manager.call_llm_for_wiki_update(trajectory, "Initial Index\n")
+
+
+def test_wiki_manager_dspy_llm_execution(tmp_path):
+    fake_lm = MagicMock(spec=dspy.LM)
+    manager = WikiManager(
+        base_path=str(tmp_path / ".claude" / "wiki"),
+        lm=fake_lm,
+        mock=False,
+    )
+    manager.llm_adapter.wiki_synthesizer = MagicMock(
+        return_value=dspy.Prediction(
+            wiki_update=WikiUpdateOutput(
+                create_patterns=[
+                    PatternEntry(
+                        name="flaky-network-retry-loop",
+                        content="# Flaky Network Retry Loop\n\n## Problem\nSocket reset.\n\n## Root Cause\nNo retry.\n\n## Fix\nAdd retry.",
+                    )
+                ],
+                update_patterns=[],
+                index_additions=[
+                    "- [flaky-network-retry-loop](wiki/patterns/flaky-network-retry-loop.md): Socket reset."
+                ],
+                append_log="Session dspy-1: Extracted flaky-network-retry-loop.",
+            )
+        )
+    )
+
+    trajectory = SessionTrajectory(
+        session_id="dspy-1",
+        timestamp="2026-10-24T12:00:00Z",
+        model_routed="claude-3-7-sonnet",
+        steps=[
+            TrajectoryStep(
+                step_number=1,
+                tool_name="Bash",
+                tool_input={"command": "curl https://example.com"},
+                observation="ConnectionResetError",
+                is_error=True,
+            )
+        ],
+    )
+
+    response = manager.call_llm_for_wiki_update(trajectory, "Initial Index\n")
+    assert len(response["create_patterns"]) == 1
+    assert response["create_patterns"][0]["name"] == "flaky-network-retry-loop"
+    assert response["update_index"]["additions"] == [
+        "- [flaky-network-retry-loop](wiki/patterns/flaky-network-retry-loop.md): Socket reset."
+    ]
+    manager.llm_adapter.wiki_synthesizer.assert_called_once()
 
 
 def test_wiki_manager_read_file_success(wiki_manager):
@@ -182,3 +267,43 @@ def test_wiki_manager_process_llm_wiki_response_full(wiki_manager, tmp_path):
     assert "Session 123: Documented edit-string-mismatch-loop." in Path(
         wiki_manager.logs_path
     ).read_text(encoding="utf-8")
+
+
+def test_wiki_manager_passes_existing_patterns_to_llm_adapter(wiki_manager):
+    wiki_manager.create_pattern(
+        "existing-uv-pattern",
+        "# Existing UV Pattern\n\n## Problem\nUV failure.\n\n## Root Cause\nBad flag.\n\n## Fix\nUse valid flag.",
+    )
+    existing = wiki_manager.get_existing_patterns()
+    assert len(existing) == 1
+    assert existing[0]["name"] == "existing-uv-pattern"
+
+    wiki_manager.llm_adapter = MagicMock()
+    wiki_manager.llm_adapter.synthesize_wiki_update.return_value = {
+        "create_patterns": [],
+        "update_patterns": [
+            {"name": "existing-uv-pattern", "content": "# Updated UV Pattern"}
+        ],
+        "update_index": {"additions": []},
+        "append_log": "Consolidated into existing-uv-pattern.",
+    }
+    trajectory = SessionTrajectory(
+        session_id="sess-uv-1",
+        timestamp="2026-10-24T12:00:00Z",
+        model_routed="claude-3-7-sonnet",
+        steps=[
+            TrajectoryStep(
+                step_number=1,
+                tool_name="Bash",
+                tool_input={"command": "uv add --dry-run pkg"},
+                observation="unexpected argument '--dry-run'",
+                is_error=True,
+            )
+        ],
+    )
+    wiki_manager.call_llm_for_wiki_update(trajectory, "Initial Index\n")
+    wiki_manager.llm_adapter.synthesize_wiki_update.assert_called_once_with(
+        trajectory,
+        "Initial Index\n",
+        existing_patterns=existing,
+    )

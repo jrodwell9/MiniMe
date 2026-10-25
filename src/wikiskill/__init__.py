@@ -9,11 +9,25 @@ from .adapters import (
     ClaudeCodeLogAdapter,
     sanitize_project_path,
 )
+from .curator import (
+    CuratorSandboxError,
+    CuratorSandboxTools,
+    WikiSkillCuratorAgent,
+    bump_plugin_version,
+)
 from .daemon import WikiSkillDaemon
 from .harness import WikiSkillHarness
+from .llm import (
+    LLMConfigurationError,
+    PatternEntry,
+    WikiPatternSynthesisSignature,
+    WikiPatternSynthesizer,
+    WikiSkillLLMAdapter,
+    WikiUpdateOutput,
+)
+from .marketplace import MarketplaceManager
 from .models import SessionTrajectory, TrajectoryStep
-from .skill_proposer import SkillProposer
-from .sync import GitHubSyncManager
+from .sync import GitHubSyncManager, ensure_agent_links
 from .wiki_manager import WikiManager
 
 __version__ = "0.1.0"
@@ -23,12 +37,23 @@ __all__ = [
     "AgentLogAdapterFactory",
     "AntigravityLogAdapter",
     "ClaudeCodeLogAdapter",
+    "CuratorSandboxError",
+    "CuratorSandboxTools",
     "GitHubSyncManager",
+    "LLMConfigurationError",
+    "MarketplaceManager",
+    "PatternEntry",
     "SessionTrajectory",
-    "SkillProposer",
     "TrajectoryStep",
     "WikiManager",
+    "WikiPatternSynthesisSignature",
+    "WikiPatternSynthesizer",
+    "WikiSkillCuratorAgent",
     "WikiSkillDaemon",
     "WikiSkillHarness",
+    "WikiSkillLLMAdapter",
+    "WikiUpdateOutput",
+    "bump_plugin_version",
+    "ensure_agent_links",
     "sanitize_project_path",
 ]

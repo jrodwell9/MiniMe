@@ -3,9 +3,97 @@ import shutil
 import subprocess
 import sys
 import time
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote_plus
+
+
+def _is_link_or_junction(path: Path) -> bool:
+    """Return True if path is a POSIX/Windows symlink or an NTFS directory junction."""
+    try:
+        if path.is_symlink():
+            return True
+        if hasattr(path, "is_junction") and path.is_junction():
+            return True
+    except OSError:
+        return False
+    return False
+
+
+def _remove_link_or_junction(path: Path) -> None:
+    """Remove a symlink or NTFS junction without deleting the target directory's contents."""
+    try:
+        if sys.platform == "win32":
+            os.rmdir(path)
+        else:
+            path.unlink(missing_ok=True)
+    except OSError:
+        try:
+            path.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
+def _create_dir_link(link_path: Path, target_path: Path) -> None:
+    """Create a directory symlink (POSIX) or NTFS directory junction (Windows) from link_path -> target_path."""
+    link_path.parent.mkdir(parents=True, exist_ok=True)
+    resolved_target = target_path.resolve()
+    if sys.platform == "win32":
+        subprocess.run(
+            ["cmd", "/c", "mklink", "/J", str(link_path), str(resolved_target)],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if not link_path.exists() and not _is_link_or_junction(link_path):
+            os.symlink(str(resolved_target), str(link_path), target_is_directory=True)
+    else:
+        rel_target = os.path.relpath(resolved_target, start=link_path.parent.resolve())
+        os.symlink(rel_target, link_path, target_is_directory=True)
+
+
+def ensure_agent_links(
+    project_dir: Path | str,
+    providers: Sequence[str] = (".claude",),
+) -> dict[str, str]:
+    """Ensure .agents/skills and .agents/wiki are canonical directories and link provider folders (e.g. .claude/) to them."""
+    p_dir = Path(project_dir).resolve()
+    agents_root = p_dir / ".agents"
+
+    # If .agents itself was a symlink or junction, remove the link first
+    if _is_link_or_junction(agents_root):
+        _remove_link_or_junction(agents_root)
+    agents_root.mkdir(parents=True, exist_ok=True)
+
+    for subdir in ("skills", "wiki"):
+        canonical_dir = agents_root / subdir
+        if _is_link_or_junction(canonical_dir):
+            _remove_link_or_junction(canonical_dir)
+        canonical_dir.mkdir(parents=True, exist_ok=True)
+
+        for provider in providers:
+            provider_root = p_dir / provider
+            provider_dir = provider_root / subdir
+
+            if _is_link_or_junction(provider_dir):
+                try:
+                    if provider_dir.resolve() == canonical_dir.resolve():
+                        continue
+                except OSError:
+                    pass
+                _remove_link_or_junction(provider_dir)
+            elif provider_dir.exists():
+                # Migrate physical provider directory contents into canonical .agents/<subdir>
+                shutil.copytree(provider_dir, canonical_dir, dirs_exist_ok=True)
+                shutil.rmtree(provider_dir)
+
+            _create_dir_link(provider_dir, canonical_dir)
+
+    return {
+        "skills_dir": str((agents_root / "skills").resolve()),
+        "wiki_dir": str((agents_root / "wiki").resolve()),
+    }
 
 
 def _parse_frontmatter(content: str) -> dict[str, Any]:
@@ -148,14 +236,16 @@ class GitHubSyncManager:
         self.pull(prune=prune)
 
         p_dir = Path(project_dir).resolve()
+        ensure_agent_links(p_dir)
+
         global_wiki = self.hub_dir / "global" / "wiki" / "patterns"
         global_skills = self.hub_dir / "global" / "skills"
 
         global_wiki.mkdir(parents=True, exist_ok=True)
         global_skills.mkdir(parents=True, exist_ok=True)
 
-        local_wiki_patterns = p_dir / ".claude" / "wiki" / "patterns"
-        local_skills = p_dir / ".claude" / "skills"
+        local_wiki_patterns = p_dir / ".agents" / "wiki" / "patterns"
+        local_skills = p_dir / ".agents" / "skills"
 
         synced_patterns = []
         if local_wiki_patterns.exists():
@@ -285,8 +375,10 @@ description: {local_fm.get("description", dest_fm.get("description", ""))}
     ) -> dict[str, Any]:
         """Sync global skills and patterns from central hub into a local repository."""
         p_dir = Path(project_dir).resolve()
-        local_skills = p_dir / ".claude" / "skills"
-        local_wiki_patterns = p_dir / ".claude" / "wiki" / "patterns"
+        ensure_agent_links(p_dir)
+
+        local_skills = p_dir / ".agents" / "skills"
+        local_wiki_patterns = p_dir / ".agents" / "wiki" / "patterns"
 
         local_skills.mkdir(parents=True, exist_ok=True)
         local_wiki_patterns.mkdir(parents=True, exist_ok=True)
@@ -308,11 +400,12 @@ description: {local_fm.get("description", dest_fm.get("description", ""))}
                             shutil.copy2(item, dest_dir / item.name)
                     applied_skills.append(s_dir.name)
 
-        # Collect valid patterns from hub
+        # Copy and collect valid patterns from hub
         global_patterns = self.hub_dir / "global" / "wiki" / "patterns"
         if global_patterns.exists():
             for f in global_patterns.glob("*.md"):
                 valid_patterns.add(f.name)
+                shutil.copy2(f, local_wiki_patterns / f.name)
 
         pruned_skills = []
         pruned_patterns = []

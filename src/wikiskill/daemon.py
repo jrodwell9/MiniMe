@@ -6,6 +6,7 @@ from typing import Any
 
 from .adapters import AgentLogAdapter, AgentLogAdapterFactory, ClaudeCodeLogAdapter
 from .harness import WikiSkillHarness
+from .llm import WikiSkillLLMAdapter
 from .sync import GitHubSyncManager
 
 
@@ -17,6 +18,10 @@ class WikiSkillDaemon:
         hub_dir: Path | str | None = None,
         interval: int = 300,
         adapters: list[AgentLogAdapter] | None = None,
+        llm_adapter: WikiSkillLLMAdapter | None = None,
+        model: str | None = None,
+        lm: Any | None = None,
+        mock: bool = False,
     ):
         self.claude_dir = Path(os.path.expanduser(claude_dir or "~/.claude")).resolve()
         self.antigravity_dir = Path(
@@ -26,6 +31,10 @@ class WikiSkillDaemon:
             os.path.expanduser(hub_dir or "~/.claude/wikiskill-hub")
         ).resolve()
         self.interval = interval
+        self.llm_adapter = llm_adapter
+        self.model = model
+        self.lm = lm
+        self.mock = mock
         self.state_file = self.hub_dir / ".processed_sessions.json"
 
         self.sync_manager = GitHubSyncManager(hub_dir=self.hub_dir)
@@ -100,6 +109,10 @@ class WikiSkillDaemon:
                         wiki_dir=self.hub_dir / "global" / "wiki",
                         skills_dir=self.hub_dir / "global" / "skills",
                         adapter=adapter,
+                        llm_adapter=self.llm_adapter,
+                        model=self.model,
+                        lm=self.lm,
+                        mock=self.mock,
                     )
 
                     res = harness.run_post_session(

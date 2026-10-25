@@ -175,8 +175,9 @@ class AntigravityLogAdapter(AgentLogAdapter):
                 since_dt = None
 
         try:
+            raw_records: list[tuple[int, int, dict[str, Any]]] = []
             with open(file_path, "r", encoding="utf-8", errors="replace") as f:
-                for line in f:
+                for line_idx, line in enumerate(f):
                     line = line.strip()
                     if not line:
                         continue
@@ -188,80 +189,94 @@ class AntigravityLogAdapter(AgentLogAdapter):
                     if not isinstance(record, dict):
                         continue
 
-                    rec_created = record.get("created_at")
-                    if (
-                        rec_created
-                        and timestamp
-                        == datetime.fromtimestamp(
-                            file_path.stat().st_mtime, tz=UTC
-                        ).isoformat()
-                    ):
-                        timestamp = rec_created
+                    raw_step_idx = record.get("step_index")
+                    step_idx = (
+                        int(raw_step_idx)
+                        if isinstance(raw_step_idx, (int, float))
+                        else line_idx
+                    )
+                    raw_records.append((step_idx, line_idx, record))
 
-                    rec_type = record.get("type")
-                    status = record.get("status", "DONE")
+            raw_records.sort(key=lambda item: (item[0], item[1]))
 
-                    content_str = str(record.get("content", ""))
-                    if "Model Selection" in content_str:
-                        if "Gemini" in content_str or "Flash" in content_str:
-                            model_routed = "gemini-3.7-flash"
-                        elif "Pro" in content_str:
-                            model_routed = "gemini-3.7-pro"
+            for _, _, record in raw_records:
+                rec_created = record.get("created_at")
+                if (
+                    rec_created
+                    and timestamp
+                    == datetime.fromtimestamp(
+                        file_path.stat().st_mtime, tz=UTC
+                    ).isoformat()
+                ):
+                    timestamp = rec_created
 
-                    if rec_type == "PLANNER_RESPONSE":
-                        raw_calls = record.get("tool_calls", [])
-                        if isinstance(raw_calls, list):
-                            for call in raw_calls:
-                                if isinstance(call, dict):
-                                    t_name = str(call.get("name", "unknown"))
-                                    t_args = call.get("args", {})
-                                    if isinstance(t_args, dict):
-                                        t_args = {
-                                            k: _clean_antigravity_arg(v)
-                                            for k, v in t_args.items()
-                                        }
-                                    pending_tool_calls.append(
-                                        {
-                                            "name": t_name,
-                                            "input": t_args,
-                                            "created_at": rec_created,
-                                        }
-                                    )
+                rec_type = record.get("type")
+                status = record.get("status", "DONE")
 
-                    elif rec_type in ("GENERIC", "TOOL_RESULT") or (
-                        record.get("source") in ("MODEL", "SYSTEM")
-                        and pending_tool_calls
-                    ):
-                        if pending_tool_calls:
-                            call_info = pending_tool_calls.pop(0)
-                            obs_content = record.get("content", "")
-                            if isinstance(obs_content, list):
-                                observation = "\n".join(
-                                    c.get("text", str(c))
-                                    if isinstance(c, dict)
-                                    else str(c)
-                                    for c in obs_content
+                content_str = str(record.get("content", ""))
+                if "Model Selection" in content_str:
+                    if "Gemini" in content_str or "Flash" in content_str:
+                        model_routed = "gemini-3.7-flash"
+                    elif "Pro" in content_str:
+                        model_routed = "gemini-3.7-pro"
+
+                if rec_type == "PLANNER_RESPONSE":
+                    raw_calls = record.get("tool_calls", [])
+                    if isinstance(raw_calls, list):
+                        for call in raw_calls:
+                            if isinstance(call, dict):
+                                t_name = str(call.get("name", "unknown"))
+                                t_args = call.get("args", {})
+                                if isinstance(t_args, dict):
+                                    t_args = {
+                                        k: _clean_antigravity_arg(v)
+                                        for k, v in t_args.items()
+                                    }
+                                pending_tool_calls.append(
+                                    {
+                                        "name": t_name,
+                                        "input": t_args,
+                                        "created_at": rec_created,
+                                    }
                                 )
-                            else:
-                                observation = str(obs_content)
 
-                            is_error = (
-                                status == "ERROR"
-                                or "Tool failed" in observation
-                                or "Traceback (most recent call last)" in observation
-                                or observation.startswith("Error:")
+                elif rec_type in ("GENERIC", "TOOL_RESULT") or (
+                    record.get("source") in ("MODEL", "SYSTEM") and pending_tool_calls
+                ):
+                    if pending_tool_calls:
+                        call_info = pending_tool_calls.pop(0)
+                        obs_content = record.get("content", "")
+                        if isinstance(obs_content, list):
+                            observation = "\n".join(
+                                c.get("text", str(c)) if isinstance(c, dict) else str(c)
+                                for c in obs_content
                             )
+                        else:
+                            observation = str(obs_content)
 
-                            all_steps.append(
-                                TrajectoryStep(
-                                    step_number=len(all_steps) + 1,
-                                    tool_name=call_info["name"],
-                                    tool_input=call_info["input"],
-                                    observation=observation,
-                                    is_error=is_error,
-                                    latency_ms=0.0,
-                                )
+                        non_zero_exit = (
+                            "The command exited with code " in observation
+                            and "The command exited with code 0." not in observation
+                        )
+                        is_error = (
+                            status == "ERROR"
+                            or "Tool failed" in observation
+                            or "Encountered error in tool execution" in observation
+                            or "Traceback (most recent call last)" in observation
+                            or observation.startswith("Error:")
+                            or non_zero_exit
+                        )
+
+                        all_steps.append(
+                            TrajectoryStep(
+                                step_number=len(all_steps) + 1,
+                                tool_name=call_info["name"],
+                                tool_input=call_info["input"],
+                                observation=observation,
+                                is_error=is_error,
+                                latency_ms=0.0,
                             )
+                        )
         except OSError as e:
             print(f"Error reading Antigravity transcript {file_path}: {e}")
             return None

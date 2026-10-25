@@ -488,3 +488,34 @@ def test_push_patterns_multi_skill_without_global_git_config(
     assert "skill-b" in prop_b["description"]
     assert "skill-a" not in prop_b["description"]
 
+
+def test_ensure_agent_links_migrates_claude_to_agents_and_links_back(tmp_path: Path):
+    from wikiskill.sync import _is_link_or_junction, ensure_agent_links
+
+    project_dir = tmp_path / "legacy_project"
+    legacy_skill = project_dir / ".claude" / "skills" / "dependency-management"
+    legacy_skill.mkdir(parents=True)
+    (legacy_skill / "SKILL.md").write_text(
+        "---\nname: dependency-management\n---\n", encoding="utf-8"
+    )
+    legacy_pat = project_dir / ".claude" / "wiki" / "patterns"
+    legacy_pat.mkdir(parents=True)
+    (legacy_pat / "uv-loop.md").write_text("# UV Loop", encoding="utf-8")
+
+    ensure_agent_links(project_dir)
+
+    # .agents/skills and .agents/wiki must be canonical physical directories
+    assert not _is_link_or_junction(project_dir / ".agents" / "skills")
+    assert not _is_link_or_junction(project_dir / ".agents" / "wiki")
+    assert (
+        project_dir / ".agents" / "skills" / "dependency-management" / "SKILL.md"
+    ).exists()
+    assert (project_dir / ".agents" / "wiki" / "patterns" / "uv-loop.md").exists()
+
+    # .claude/skills and .claude/wiki must be symlinks/junctions pointing to .agents/
+    assert _is_link_or_junction(project_dir / ".claude" / "skills")
+    assert _is_link_or_junction(project_dir / ".claude" / "wiki")
+    assert (
+        project_dir / ".claude" / "skills" / "dependency-management" / "SKILL.md"
+    ).exists()
+    assert (project_dir / ".claude" / "wiki" / "patterns" / "uv-loop.md").exists()
