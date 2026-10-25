@@ -10,6 +10,7 @@ from .adapters import (
     sanitize_project_path,
 )
 from .models import SessionTrajectory, TrajectoryStep
+from .wiki_manager import WikiManager
 
 __version__ = "0.1.0"
 
@@ -20,5 +21,6 @@ __all__ = [
     "ClaudeCodeLogAdapter",
     "SessionTrajectory",
     "TrajectoryStep",
+    "WikiManager",
     "sanitize_project_path",
 ]

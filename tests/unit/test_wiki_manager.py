@@ -86,3 +86,99 @@ def test_wiki_manager_append_log(wiki_manager, tmp_path):
     log_file = tmp_path / ".claude" / "wiki" / "logs.md"
     assert log_file.read_text() == "Initial Log\nLog entry 1.\nLog entry 2.\n"
 
+
+def test_wiki_manager_call_llm_for_wiki_update_extracts_real_patterns(wiki_manager):
+    trajectory = SessionTrajectory(
+        session_id="test-session-patterns",
+        timestamp="2026-08-31T12:00:00Z",
+        model_routed="claude-3-7-sonnet",
+        steps=[
+            TrajectoryStep(
+                step_number=1,
+                tool_name="Edit",
+                tool_input={"file_path": "foo.py", "old_string": "def bar():"},
+                observation="<tool_use_error>String to replace not found in file.",
+                is_error=True,
+                latency_ms=10.0,
+            ),
+            TrajectoryStep(
+                step_number=2,
+                tool_name="Bash",
+                tool_input={"command": "pytest"},
+                observation="Exit code 127\n/usr/bin/bash: line 1: pytest: command not found",
+                is_error=True,
+                latency_ms=15.0,
+            ),
+        ],
+        final_status="success",
+    )
+
+    response = wiki_manager.call_llm_for_wiki_update(trajectory, "Initial Index\n")
+    assert len(response["create_patterns"]) >= 2
+    pattern_names = [p["name"] for p in response["create_patterns"]]
+    assert "edit-string-mismatch-loop" in pattern_names
+    assert "unprefixed-python-runner-loop" in pattern_names
+    assert len(response["update_index"]["additions"]) >= 2
+    assert "test-session-patterns" in response["append_log"]
+
+
+def test_wiki_manager_clean_session_produces_no_patterns(wiki_manager):
+    trajectory = SessionTrajectory(
+        session_id="clean-test-session",
+        timestamp="2026-10-03T12:00:00Z",
+        model_routed="claude-3-7-sonnet",
+        steps=[
+            TrajectoryStep(
+                step_number=1,
+                tool_name="Read",
+                tool_input={"file_path": "app.py"},
+                observation="def foo(): pass",
+                is_error=False,
+                latency_ms=10.0,
+            ),
+            TrajectoryStep(
+                step_number=2,
+                tool_name="Bash",
+                tool_input={"command": "uv run pytest"},
+                observation="1 passed in 0.02s",
+                is_error=False,
+                latency_ms=25.0,
+            ),
+        ],
+        final_status="success",
+    )
+
+    response = wiki_manager.call_llm_for_wiki_update(trajectory, "Initial Index\n")
+    assert len(response["create_patterns"]) == 0
+    assert len(response["update_index"]["additions"]) == 0
+    assert "clean execution" in response["append_log"]
+
+
+def test_wiki_manager_process_llm_wiki_response_full(wiki_manager, tmp_path):
+    llm_response = {
+        "create_patterns": [
+            {
+                "name": "edit-string-mismatch-loop",
+                "content": "# Edit String Mismatch Loop\n\n## Problem\nEdit failed.\n\n## Root Cause\nMismatched string.\n\n## Fix\nInspect lines first.",
+            }
+        ],
+        "update_patterns": [],
+        "update_index": {
+            "additions": [
+                "- [edit-string-mismatch-loop](wiki/patterns/edit-string-mismatch-loop.md): Edit failed. Cause: Mismatched string. Fix: Inspect lines first."
+            ]
+        },
+        "append_log": "Session 123: Documented edit-string-mismatch-loop.",
+    }
+
+    wiki_manager.process_llm_wiki_response(llm_response)
+
+    pattern_file = Path(wiki_manager.patterns_path) / "edit-string-mismatch-loop.md"
+    assert pattern_file.exists()
+    assert "# Edit String Mismatch Loop" in pattern_file.read_text(encoding="utf-8")
+    assert "- [edit-string-mismatch-loop]" in Path(wiki_manager.index_path).read_text(
+        encoding="utf-8"
+    )
+    assert "Session 123: Documented edit-string-mismatch-loop." in Path(
+        wiki_manager.logs_path
+    ).read_text(encoding="utf-8")
