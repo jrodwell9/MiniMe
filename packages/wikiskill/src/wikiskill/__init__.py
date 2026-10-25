@@ -9,6 +9,7 @@ from .adapters import (
     ClaudeCodeLogAdapter,
     sanitize_project_path,
 )
+from .harness import WikiSkillHarness
 from .models import SessionTrajectory, TrajectoryStep
 from .skill_proposer import SkillProposer
 from .wiki_manager import WikiManager
@@ -24,5 +25,6 @@ __all__ = [
     "SkillProposer",
     "TrajectoryStep",
     "WikiManager",
+    "WikiSkillHarness",
     "sanitize_project_path",
 ]
