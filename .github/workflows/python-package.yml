@@ -16,7 +16,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.9", "3.10", "3.11"]
+        python-version: ["3.14"]
 
     steps:
     - uses: actions/checkout@v4
@@ -30,10 +30,10 @@ jobs:
         uv sync --group dev
     - name: Lint
       run: |
-        ruff check
+        uv run ruff check
     - name: Type Check
       run: |
-        ty check
-    - name: Test with pytest
+        uv run ty check
+    - name: Test with pytest and coverage
       run: |
-        pytest
+        uv run pytest --cov=wikiskill --cov-report=term-missing --cov-fail-under=90
