@@ -1,5 +1,5 @@
 """
-WikiSkill: Compounding knowledge and self-evolving skill harness for AI agents.
+WikiSkill: Compounding knowledge and self-evolving skill harness for AI agents (Claude Code, Antigravity, and beyond).
 """
 
 from .adapters import (
@@ -13,6 +13,7 @@ from .daemon import WikiSkillDaemon
 from .harness import WikiSkillHarness
 from .models import SessionTrajectory, TrajectoryStep
 from .skill_proposer import SkillProposer
+from .sync import GitHubSyncManager
 from .wiki_manager import WikiManager
 
 __version__ = "0.1.0"
@@ -22,6 +23,7 @@ __all__ = [
     "AgentLogAdapterFactory",
     "AntigravityLogAdapter",
     "ClaudeCodeLogAdapter",
+    "GitHubSyncManager",
     "SessionTrajectory",
     "SkillProposer",
     "TrajectoryStep",
