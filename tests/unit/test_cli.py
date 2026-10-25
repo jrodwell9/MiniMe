@@ -35,6 +35,30 @@ def test_cli_parser_status_command():
     assert args.project_dir == "/custom/path"
 
 
+def test_cli_parser_sync_command():
+    parser = build_parser()
+    args = parser.parse_args(["sync", "--pull", "--prune", "--hub-dir", "/custom/hub"])
+    assert args.command == "sync"
+    assert args.pull is True
+    assert args.prune is True
+    assert args.hub_dir == "/custom/hub"
+
+
+def test_cli_parser_daemon_command():
+    parser = build_parser()
+    args = parser.parse_args(["daemon", "--interval", "60", "--once"])
+    assert args.command == "daemon"
+    assert args.interval == 60
+    assert args.once is True
+
+
+def test_cli_parser_setup_hub_command():
+    parser = build_parser()
+    args = parser.parse_args(["setup-hub", "--remote", "git@github.com:user/hub.git"])
+    assert args.command == "setup-hub"
+    assert args.remote == "git@github.com:user/hub.git"
+
+
 def test_cli_init_execution(tmp_path: Path):
     target_dir = tmp_path / "test_repo"
     target_dir.mkdir()
@@ -72,3 +96,21 @@ def test_cli_post_session_execution(tmp_path: Path):
     assert not (wiki_dir / "patterns").exists()
     assert not (target_dir / ".claude" / "skills").exists()
 
+
+def test_cli_sync_prune_default_project_dir(tmp_path: Path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    hub_dir = tmp_path / "hub"
+
+    # Initialize workspace
+    main(["init"])
+
+    # Create orphaned dummy skill
+    dummy_skill = tmp_path / ".claude" / "skills" / "dummy-orphaned"
+    dummy_skill.mkdir(parents=True)
+    (dummy_skill / "SKILL.md").write_text("dummy", encoding="utf-8")
+
+    exit_code = main(["sync", "--pull", "--prune", "--hub-dir", str(hub_dir)])
+    assert exit_code == 0
+
+    # Assert dummy skill was pruned
+    assert not dummy_skill.exists()
