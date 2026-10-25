@@ -1,0 +1,9 @@
+{
+  "enabledPlugins": {
+    "cli-tool-execution@wikiskill-marketplace": true,
+    "dependency-management@wikiskill-marketplace": true,
+    "refactoring-api-management@wikiskill-marketplace": true,
+    "test-debugging@wikiskill-marketplace": true,
+    "llm-configuration@wikiskill-marketplace": true
+  }
+}

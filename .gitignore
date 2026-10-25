@@ -209,6 +209,12 @@ __marimo__/
 # Claude raw data
 .claude/raw/*
 
-# Antigravity local junction
-.agents/
+# Zero-Copy Agent Marketplace Junctions & Local State
+.agents/plugins/
+.agents/skills/
+.agents/wiki/
+.claude/skills/
+.claude/wiki/
+.gemini/skills/
+.gemini/wiki/
 

@@ -1,0 +1,13 @@
+{
+  "inherits": [
+    {
+      "path": "~/.claude/wikiskill-hub/groups/global/plugins.json"
+    },
+    {
+      "path": "~/.claude/wikiskill-hub/groups/python/plugins.json"
+    },
+    {
+      "path": "~/.claude/wikiskill-hub/groups/ai-engineer/plugins.json"
+    }
+  ]
+}
