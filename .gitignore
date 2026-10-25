@@ -215,6 +215,5 @@ __marimo__/
 .agents/wiki/
 .claude/skills/
 .claude/wiki/
-.gemini/skills/
-.gemini/wiki/
+.gemini/
 

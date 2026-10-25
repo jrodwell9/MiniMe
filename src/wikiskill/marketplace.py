@@ -301,4 +301,3 @@ class MarketplaceManager:
             "skills_json": str(skills_json_path),
             "plugins_json": str(plugins_json_path),
         }
-

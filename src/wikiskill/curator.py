@@ -29,16 +29,18 @@ class CuratorLocalSessionSignature(dspy.Signature):
     """Curate and consolidate newly extracted session failure patterns into `<project_dir>/.agents/{wiki,skills}` using the provided sandboxed tools.
     1. Inspect existing local skills/patterns and hub groups/plugins/open PRs first (`list_hub_groups_and_plugins`, `list_hub_skills_and_open_prs`).
     2. Consolidate overlapping patterns into existing domain skills (`skills/<name>/SKILL.md` and `PURPOSE.md`) rather than creating fragmented micro-skills.
-    3. Distinguish which domain group each skill belongs to (`global` for universal workflows like git/file-editing, an existing domain group like `python` or `ai-engineer`, or a new kebab-case group if needed) and include `group: <group-name>` in the skill's YAML frontmatter and proposal object.
-    4. If an unmerged local micro-skill is superseded by a broader domain skill, merge its rules/patterns and call `delete_unmerged_local_skill`.
-    5. Return a JSON summary with keys `proposals` (list of updated/created skill objects including `group`) and `deleted_skills` (list of deleted skill names)."""
+    3. Under NO circumstances should `proposals` list raw pattern slugs or failure pattern names. Each entry in `proposals` MUST be a broad operational domain skill (e.g. 'file-editing', 'cli-tool-execution', 'dependency-management') that addresses one or more patterns.
+    4. Distinguish which domain group each skill belongs to (`global` for universal workflows like git/file-editing, an existing domain group like `python` or `ai-engineer`, or a new kebab-case group if needed) and include `group: <group-name>` in the skill's YAML frontmatter and proposal object.
+    5. When `dry_run=False`, you MUST invoke `write_local_file('skills/<name>/SKILL.md', ...)` and `write_local_file('skills/<name>/PURPOSE.md', ...)` to persist the updated skill and its frontmatter/rules to disk.
+    6. If an unmerged local micro-skill is superseded by a broader domain skill, merge its rules/patterns and call `delete_unmerged_local_skill`.
+    7. Return a JSON summary with keys `proposals` (list of updated/created domain skill objects including `group`, `rules`, and `patterns_addressed`) and `deleted_skills` (list of deleted skill names)."""
 
     session_id: str = dspy.InputField(desc="Session identifier")
     extracted_patterns_json: str = dspy.InputField(
         desc="JSON list of newly extracted/updated wiki patterns ({name, content})"
     )
     curation_summary_json: str = dspy.OutputField(
-        desc="JSON object with keys 'proposals' and 'deleted_skills'"
+        desc="JSON object with keys 'proposals' (list of domain skills, NEVER raw pattern names) and 'deleted_skills'"
     )
 
 
@@ -615,13 +617,9 @@ class WikiSkillCuratorAgent:
                 extracted_patterns=extracted_patterns,
                 dry_run=dry_run,
             )
-            return {
-                "status": "dry_run" if dry_run else "success",
-                "proposals": out.get("proposals", []),
-                "deleted_skills": out.get("deleted_skills", []),
-            }
-
-        if self.llm_adapter is not None and not self.llm_adapter.mock:
+            raw_proposals = out.get("proposals", [])
+            deleted_skills = out.get("deleted_skills", [])
+        elif self.llm_adapter is not None and not self.llm_adapter.mock:
             lm = self.llm_adapter.get_lm()
             react_tools: list[Callable[..., Any]] = [
                 tools.read_project_context,
@@ -657,23 +655,344 @@ class WikiSkillCuratorAgent:
                 )
             except json.JSONDecodeError:
                 parsed = {"proposals": [], "deleted_skills": []}
-            return {
-                "status": "dry_run" if dry_run else "success",
-                "proposals": parsed.get("proposals", []),
-                "deleted_skills": parsed.get("deleted_skills", []),
-            }
+            raw_proposals = parsed.get("proposals", [])
+            deleted_skills = parsed.get("deleted_skills", [])
+        else:
+            raw_proposals = self._mock_curate_skills(
+                tools=tools,
+                session_id=session_id,
+                extracted_patterns=extracted_patterns,
+                dry_run=dry_run,
+            )
+            deleted_skills = []
 
-        proposals = self._mock_curate_skills(
+        # Filter out raw pattern names mistakenly returned as proposals
+        extracted_pattern_names = {
+            p.get("name") for p in extracted_patterns if p.get("name")
+        }
+        valid_proposals: list[dict[str, Any]] = []
+        for prop in raw_proposals:
+            if not isinstance(prop, dict):
+                continue
+            prop_name = str(prop.get("name", "")).strip()
+            if not prop_name or prop_name in extracted_pattern_names:
+                continue
+            valid_proposals.append(prop)
+
+        # Reconcile unaddressed patterns and ensure disk persistence
+        reconciled_proposals = self._reconcile_patterns_into_skills(
             tools=tools,
             session_id=session_id,
             extracted_patterns=extracted_patterns,
+            existing_proposals=valid_proposals,
             dry_run=dry_run,
         )
+
         return {
             "status": "dry_run" if dry_run else "success",
-            "proposals": proposals,
-            "deleted_skills": [],
+            "proposals": reconciled_proposals,
+            "deleted_skills": deleted_skills,
         }
+
+    @classmethod
+    def map_pattern_to_domain_skill(
+        cls, pattern_name: str, content: str = ""
+    ) -> tuple[str, str, str]:
+        """Map a failure pattern to a canonical domain skill name, group, and summary description."""
+        p_name = pattern_name.lower()
+        full_text = f"{pattern_name} {content}".lower()
+
+        if (
+            any(
+                k in p_name
+                for k in (
+                    "file-",
+                    "system-permission",
+                    "permission-denied",
+                    "edit-string",
+                    "file_not_found",
+                )
+            )
+            or "view_file" in full_text
+        ):
+            return (
+                "file-editing",
+                "global",
+                "Best practices and guardrails for safe, exact file modifications and path validation.",
+            )
+        if (
+            any(
+                k in p_name
+                for k in (
+                    "cli-",
+                    "subcommand",
+                    "unprefixed-python",
+                    "command-not-found",
+                    "syntax-error",
+                )
+            )
+            or "run_command" in full_text
+        ):
+            return (
+                "cli-tool-execution",
+                "python",
+                "Rules for executing python tools, test runners, and linters in the project environment, including handling CLI argument parsing.",
+            )
+        if (
+            any(
+                k in p_name
+                for k in (
+                    "dependency",
+                    "import",
+                    "module-resolution",
+                    "linting",
+                    "type-checking",
+                    "bad-dunder-all",
+                )
+            )
+            or "pytest" in full_text
+        ):
+            return (
+                "dependency-management",
+                "python",
+                "Standards for adding dependencies, organizing package imports, and ensuring internal project modules are resolvable.",
+            )
+        if any(
+            k in p_name
+            for k in ("contract", "refactor", "attribute-error", "typeerror")
+        ):
+            return (
+                "refactoring-api-management",
+                "python",
+                "Best practices for maintaining API contracts during refactoring to prevent TypeError and AttributeError.",
+            )
+        if any(
+            k in p_name for k in ("test-assertion", "test-failure", "test-debugging")
+        ):
+            return (
+                "test-debugging",
+                "python",
+                "Rules for diagnosing and fixing test assertion failures and ensuring test expectations are aligned with implementation.",
+            )
+        if any(k in p_name for k in ("git-", "branch-", "commit-", "diff-buffer")):
+            return (
+                "git-workflow",
+                "global",
+                "Best practices for git branch management, commit discipline, and safe updates.",
+            )
+        if any(k in p_name for k in ("llm-", "model-config", "dspy", "provider")):
+            return (
+                "llm-configuration",
+                "ai-engineer",
+                "Rules for configuring LLM providers and resolving model names for the WikiSkill LLM adapter.",
+            )
+        if any(
+            k in p_name
+            for k in (
+                "plugin-",
+                "marketplace",
+                "strict-validation",
+                "hub-sync",
+                "evolution",
+            )
+        ):
+            return (
+                "wikiskill",
+                "global",
+                "Self-evolving knowledge and skill harness for Claude Code. Use to discover operational skills, consult diagnostic failure patterns, and record in-flight reflection patterns.",
+            )
+
+        return (
+            "cli-tool-execution"
+            if "python" in full_text or "command" in full_text
+            else "file-editing",
+            "global",
+            f"Operational guidance synthesized for {pattern_name}.",
+        )
+
+    @staticmethod
+    def _extract_fix_or_rules(content: str) -> list[str]:
+        """Extract actionable rule bullet points from a pattern's Fix section."""
+        rules: list[str] = []
+        if not content:
+            return rules
+        lines = content.splitlines()
+        in_fix = False
+        for line in lines:
+            line_str = line.strip()
+            if any(
+                h in line_str.lower()
+                for h in (
+                    "## fix",
+                    "## recommended fix",
+                    "## prevention",
+                    "## rules",
+                )
+            ):
+                in_fix = True
+                continue
+            if in_fix and line_str.startswith("## "):
+                break
+            if in_fix and line_str:
+                if line_str.startswith(("- ", "* ")) or (
+                    len(line_str) > 2
+                    and line_str[0].isdigit()
+                    and line_str[1] in (".", ")")
+                ):
+                    cleaned = line_str.lstrip("0123456789.-*) ").strip()
+                else:
+                    cleaned = line_str
+                if cleaned.startswith("**") and "**:" in cleaned:
+                    cleaned = cleaned.split("**:", 1)[1].strip()
+                elif cleaned.startswith("**") and "**" in cleaned:
+                    cleaned = cleaned.replace("**", "")
+                if cleaned:
+                    rules.append(cleaned)
+        return rules
+
+    @classmethod
+    def _reconcile_patterns_into_skills(
+        cls,
+        tools: CuratorSandboxTools,
+        session_id: str,
+        extracted_patterns: list[dict[str, Any]],
+        existing_proposals: list[dict[str, Any]],
+        dry_run: bool,
+    ) -> list[dict[str, Any]]:
+        """Ensure every extracted pattern is consolidated into a domain skill, and write skills to disk if not dry_run."""
+        proposals_by_skill: dict[str, dict[str, Any]] = {}
+        addressed_patterns: set[str] = set()
+
+        for p in existing_proposals:
+            s_name = p.get("name")
+            if not s_name:
+                continue
+            proposals_by_skill[s_name] = dict(p)
+            for pat in p.get("patterns_addressed", []):
+                addressed_patterns.add(pat)
+
+        unaddressed = [
+            p
+            for p in extracted_patterns
+            if p.get("name") and p["name"] not in addressed_patterns
+        ]
+
+        for pat_dict in unaddressed:
+            pat_name = pat_dict["name"]
+            pat_content = pat_dict.get("content", "")
+            target_skill, grp, desc = cls.map_pattern_to_domain_skill(
+                pat_name, pat_content
+            )
+            pat_rules = cls._extract_fix_or_rules(pat_content)
+
+            if target_skill not in proposals_by_skill:
+                proposals_by_skill[target_skill] = {
+                    "action": "update",
+                    "name": target_skill,
+                    "group": grp,
+                    "description": desc,
+                    "status": "active",
+                    "rules": list(pat_rules),
+                    "patterns_addressed": [pat_name],
+                }
+            else:
+                existing_entry = proposals_by_skill[target_skill]
+                pats_list = existing_entry.setdefault("patterns_addressed", [])
+                if pat_name not in pats_list:
+                    pats_list.append(pat_name)
+                rules_list = existing_entry.setdefault("rules", [])
+                for r in pat_rules:
+                    if r not in rules_list:
+                        rules_list.append(r)
+
+        final_proposals: list[dict[str, Any]] = []
+        for skill_name, prop in proposals_by_skill.items():
+            grp = prop.get("group") or cls.infer_skill_group(skill_name, {})
+            prop["group"] = grp
+            desc = prop.get("description") or f"Operational guidance for {skill_name}."
+            patterns = list(dict.fromkeys(prop.get("patterns_addressed", [])))
+            prop["patterns_addressed"] = patterns
+            rules = prop.get("rules", [])
+
+            if not dry_run:
+                skill_rel = f"skills/{skill_name}/SKILL.md"
+                purpose_rel = f"skills/{skill_name}/PURPOSE.md"
+                existing_content = ""
+                existing_pats: list[str] = []
+                try:
+                    existing_content = tools.read_local_file(skill_rel)
+                    fm = _parse_frontmatter(existing_content)
+                    raw = fm.get("patterns_addressed") or fm.get("patterns") or []
+                    existing_pats = [raw] if isinstance(raw, str) else list(raw)
+                    if fm.get("description"):
+                        desc = fm["description"]
+                except FileNotFoundError, OSError:
+                    pass
+
+                all_pats = list(dict.fromkeys(list(existing_pats) + patterns))
+                prop["patterns_addressed"] = all_pats
+
+                pats_yaml = "\n".join(f"  - {p}" for p in all_pats)
+                pats_block = f"\npatterns_addressed:\n{pats_yaml}" if all_pats else ""
+
+                if existing_content and "---" in existing_content:
+                    body = existing_content.split("---", 2)[2].strip()
+                    new_rules_to_add = [r for r in rules if r not in body]
+                    if new_rules_to_add:
+                        rules_addition = "\n".join(f"- {r}" for r in new_rules_to_add)
+                        body = f"{body}\n\n### Additional Guidelines\n{rules_addition}"
+                    updated_skill_md = f"""---
+name: {skill_name}
+group: {grp}
+description: {desc}
+status: active
+origin_session: {session_id}
+{pats_block.strip()}
+---
+
+{body}
+"""
+                else:
+                    rules_md = (
+                        "\n".join(f"- {r}" for r in rules)
+                        if rules
+                        else "- Follow project guidelines."
+                    )
+                    updated_skill_md = f"""---
+name: {skill_name}
+group: {grp}
+description: {desc}
+status: active
+origin_session: {session_id}
+{pats_block.strip()}
+---
+
+# Operational Rules
+
+## Trigger
+Apply when performing {skill_name} operations in this codebase.
+
+## Rules
+{rules_md}
+"""
+
+                pat_bullets = "\n".join(f"- `{p}`" for p in all_pats)
+                updated_purpose_md = f"""# Purpose & Origin
+
+## Origin
+Origin Session: {session_id}
+Status: active
+Group: {grp}
+
+## Patterns Addressed
+{pat_bullets}
+"""
+                tools.write_local_file(skill_rel, updated_skill_md.strip() + "\n")
+                tools.write_local_file(purpose_rel, updated_purpose_md.strip() + "\n")
+
+            final_proposals.append(prop)
+
+        return final_proposals
 
     @staticmethod
     def _mock_curate_skills(
