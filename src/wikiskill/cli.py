@@ -48,6 +48,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="Custom Claude home directory (default: ~/.claude).",
     )
     parser.add_argument(
+        "--agent",
+        type=str,
+        help="Target agent log adapter name (e.g. claude, antigravity).",
+    )
+    parser.add_argument(
+        "--model",
+        type=str,
+        help="DSPy LLM model string (e.g. anthropic/claude-3-7-sonnet-latest, gemini/gemini-2.5-flash).",
+    )
+    parser.add_argument(
         "--mock",
         action="store_true",
         help="Run with synthetic session trajectory.",
@@ -94,6 +104,16 @@ def build_parser() -> argparse.ArgumentParser:
         "--claude-dir",
         type=str,
         help="Custom Claude home directory.",
+    )
+    post_parser.add_argument(
+        "--agent",
+        type=str,
+        help="Target agent log adapter name (e.g. claude, antigravity).",
+    )
+    post_parser.add_argument(
+        "--model",
+        type=str,
+        help="DSPy LLM model string (e.g. anthropic/claude-3-7-sonnet-latest, gemini/gemini-2.5-flash).",
     )
     post_parser.add_argument(
         "--mock",
@@ -212,6 +232,16 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Run single scan pass and exit.",
     )
+    daemon_parser.add_argument(
+        "--model",
+        type=str,
+        help="DSPy LLM model string (e.g. anthropic/claude-3-7-sonnet-latest, gemini/gemini-2.5-flash).",
+    )
+    daemon_parser.add_argument(
+        "--mock",
+        action="store_true",
+        help="Use deterministic heuristic mode instead of calling LLM provider.",
+    )
 
     # setup-hub subcommand
     setup_parser = subparsers.add_parser(
@@ -232,7 +262,49 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _load_cli_environment() -> None:
+    """Load .env file and fallback to Windows User/Machine registry env vars for LLM keys."""
+    try:
+        from dotenv import load_dotenv
+
+        load_dotenv(override=False)
+    except ImportError:
+        pass
+
+    if sys.platform == "win32":
+        import winreg
+
+        llm_keys = (
+            "WIKISKILL_MODEL",
+            "OPENROUTER_API_KEY",
+            "ANTHROPIC_API_KEY",
+            "GEMINI_API_KEY",
+            "GOOGLE_API_KEY",
+            "OPENAI_API_KEY",
+        )
+        for key in llm_keys:
+            if os.environ.get(key):
+                continue
+            for hive, subkey in (
+                (winreg.HKEY_CURRENT_USER, "Environment"),
+                (
+                    winreg.HKEY_LOCAL_MACHINE,
+                    r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment",
+                ),
+            ):
+                try:
+                    with winreg.OpenKey(hive, subkey) as reg_key:
+                        val, _ = winreg.QueryValueEx(reg_key, key)
+                        if isinstance(val, str) and val.strip():
+                            os.environ[key] = val.strip()
+                            break
+                except OSError:
+                    continue
+
+
 def main(argv: Sequence[str] | None = None) -> int:
+    if argv is None:
+        _load_cli_environment()
     parser = build_parser()
     args = parser.parse_args(argv if argv is not None else sys.argv[1:])
 
@@ -300,9 +372,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 )
 
         if push_flag:
-            # 1. Ensure hub has latest remote main and project has merged updates
+            # 1. Ensure hub has latest remote main without overwriting local skill updates
             manager.pull(prune=prune_flag)
-            manager.sync_hub_to_project(p_dir, prune=prune_flag)
 
             # 2. Promote any local project additions/edits to hub
             res = manager.sync_project_to_hub(p_dir, prune=prune_flag)
@@ -346,9 +417,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                         )
             else:
                 print("Pushed local updates directly to remote main.")
-
-            # 4. Re-sync hub to project
-            manager.sync_hub_to_project(p_dir, prune=prune_flag)
+                manager.sync_hub_to_project(p_dir, prune=prune_flag)
 
         return 0
 
@@ -357,6 +426,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             claude_dir=getattr(args, "claude_dir", None),
             hub_dir=getattr(args, "hub_dir", None),
             interval=getattr(args, "interval", 300),
+            model=getattr(args, "model", None),
+            mock=getattr(args, "mock", False),
         )
         daemon.run_loop(once=getattr(args, "once", False))
         return 0
@@ -380,6 +451,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             wiki_dir=getattr(args, "wiki_dir", None),
             skills_dir=getattr(args, "skills_dir", None),
             claude_dir=getattr(args, "claude_dir", None),
+            agent=getattr(args, "agent", None),
+            model=getattr(args, "model", None),
             mock=getattr(args, "mock", False),
             verbose=getattr(args, "verbose", False) or True,
         )
@@ -395,8 +468,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(json.dumps(res, indent=2))
             return 0
         else:
+            all_patterns = list(res.get("patterns_created", [])) + list(
+                res.get("patterns_updated", [])
+            )
             print(f"Successfully processed session {res['session_id']}.")
-            print(f"Patterns extracted: {', '.join(res['patterns_created'])}")
+            print(f"Patterns extracted: {', '.join(all_patterns)}")
             print(f"Skills applied: {', '.join(p['name'] for p in res['proposals'])}")
             return 0
 

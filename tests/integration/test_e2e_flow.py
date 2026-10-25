@@ -4,6 +4,7 @@ from pathlib import Path
 from wikiskill import (
     GitHubSyncManager,
     WikiSkillHarness,
+    WikiSkillLLMAdapter,
     sanitize_project_path,
 )
 
@@ -25,6 +26,7 @@ def test_e2e_full_lifecycle(tmp_path: Path):
     harness = WikiSkillHarness(
         project_dir=sandbox_repo,
         claude_dir=tmp_path / ".claude",
+        llm_adapter=WikiSkillLLMAdapter(mock=True),
     )
     harness.init_project()
 

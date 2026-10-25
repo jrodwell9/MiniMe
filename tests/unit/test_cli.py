@@ -46,10 +46,29 @@ def test_cli_parser_sync_command():
 
 def test_cli_parser_daemon_command():
     parser = build_parser()
-    args = parser.parse_args(["daemon", "--interval", "60", "--once"])
+    args = parser.parse_args(
+        ["daemon", "--interval", "60", "--once", "--model", "gemini/gemini-2.5-flash"]
+    )
     assert args.command == "daemon"
     assert args.interval == 60
     assert args.once is True
+    assert args.model == "gemini/gemini-2.5-flash"
+
+
+def test_cli_parser_post_session_model_flag():
+    parser = build_parser()
+    args = parser.parse_args(
+        [
+            "post-session",
+            "--model",
+            "anthropic/claude-3-7-sonnet-latest",
+            "--agent",
+            "antigravity",
+        ]
+    )
+    assert args.command == "post-session"
+    assert args.model == "anthropic/claude-3-7-sonnet-latest"
+    assert args.agent == "antigravity"
 
 
 def test_cli_parser_setup_hub_command():

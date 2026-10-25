@@ -3,7 +3,9 @@ from pathlib import Path
 from typing import Any
 
 from .adapters import AgentLogAdapter, AgentLogAdapterFactory, ClaudeCodeLogAdapter
-from .skill_proposer import SkillProposer
+from .curator import WikiSkillCuratorAgent
+from .llm import WikiSkillLLMAdapter
+from .sync import GitHubSyncManager, ensure_agent_links
 from .wiki_manager import WikiManager
 
 
@@ -15,23 +17,36 @@ class WikiSkillHarness:
         skills_dir: str | Path | None = None,
         claude_dir: str | Path | None = None,
         antigravity_dir: str | Path | None = None,
+        hub_dir: str | Path | None = None,
         adapter: AgentLogAdapter | None = None,
         agent: str | None = None,
+        llm_adapter: WikiSkillLLMAdapter | None = None,
+        model: str | None = None,
+        lm: Any | None = None,
         mock: bool = False,
+        sync_before_run: bool = True,
         verbose: bool = False,
     ):
         self.project_dir = Path(project_dir or os.getcwd()).resolve()
+        self._custom_dirs = bool(wiki_dir or skills_dir)
         self.wiki_dir = Path(
-            wiki_dir or (self.project_dir / ".claude" / "wiki")
+            wiki_dir or (self.project_dir / ".agents" / "wiki")
         ).resolve()
         self.skills_dir = Path(
-            skills_dir or (self.project_dir / ".claude" / "skills")
+            skills_dir or (self.project_dir / ".agents" / "skills")
         ).resolve()
         self.claude_dir = Path(os.path.expanduser(claude_dir or "~/.claude")).resolve()
         self.antigravity_dir = Path(
             os.path.expanduser(antigravity_dir or "~/.gemini/antigravity")
         ).resolve()
+        self._explicit_hub_dir = bool(hub_dir)
+        self.hub_dir = (
+            Path(os.path.expanduser(hub_dir)).resolve()
+            if hub_dir
+            else (self.claude_dir / "wikiskill-hub").resolve()
+        )
         self.mock = mock
+        self.sync_before_run = sync_before_run
         self.verbose = verbose
 
         projects_dir = self.claude_dir / "projects"
@@ -55,13 +70,30 @@ class WikiSkillHarness:
                 mode=mode,
             )
 
-        self.wiki_manager = WikiManager(base_path=str(self.wiki_dir))
-        self.skill_proposer = SkillProposer(base_path=str(self.skills_dir))
+        self.llm_adapter = llm_adapter or WikiSkillLLMAdapter(
+            model=model,
+            lm=lm,
+            mock=mock,
+        )
+        self.wiki_manager = WikiManager(
+            base_path=str(self.wiki_dir),
+            llm_adapter=self.llm_adapter,
+            mock=self.llm_adapter.mock,
+        )
+        self.curator = WikiSkillCuratorAgent(
+            project_dir=self.project_dir,
+            hub_dir=self.hub_dir,
+            skills_dir=self.skills_dir,
+            wiki_dir=self.wiki_dir,
+            llm_adapter=self.llm_adapter,
+        )
 
     def init_project(self) -> dict[str, Any]:
-        """Scaffold .claude/wiki and .claude/skills directories in target project."""
+        """Scaffold canonical .agents/wiki and .agents/skills directories and link .claude/ in target project."""
+        if not self._custom_dirs:
+            ensure_agent_links(self.project_dir)
         self.wiki_manager.initialize_wiki()
-        self.skill_proposer.initialize_skills()
+        self.skills_dir.mkdir(parents=True, exist_ok=True)
         return {
             "status": "success",
             "wiki_dir": str(self.wiki_dir),
@@ -77,11 +109,10 @@ class WikiSkillHarness:
             patterns = [p.stem for p in pattern_dir.glob("*.md")]
 
         skills: list[str] = []
-        skills_path = Path(self.skill_proposer.base_path)
-        if skills_path.exists():
+        if self.skills_dir.exists():
             skills = [
                 s.name
-                for s in skills_path.iterdir()
+                for s in self.skills_dir.iterdir()
                 if s.is_dir() and (s / "SKILL.md").exists()
             ]
 
@@ -100,6 +131,7 @@ class WikiSkillHarness:
         session_file: Path | str | None = None,
         start_step: int = 0,
         dry_run: bool = False,
+        sync_before_run: bool | None = None,
     ) -> dict[str, Any]:
         """Execute self-evolution loop on the session transcript."""
         if session_file is not None:
@@ -121,7 +153,6 @@ class WikiSkillHarness:
                 f"(model: {trajectory.model_routed}, steps: {len(trajectory.steps)})"
             )
 
-        # If clean session with 0 steps (e.g. no new steps since last checkpoint), return clean_session
         if not trajectory.steps:
             return {
                 "status": "clean_session",
@@ -130,26 +161,56 @@ class WikiSkillHarness:
                 "model": trajectory.model_routed,
                 "steps_count": 0,
                 "patterns_created": [],
+                "patterns_updated": [],
                 "proposals": [],
             }
 
-        # Step 1: Wiki Maintainer processes session trajectory
+        has_errors = any(s.is_error for s in trajectory.steps)
+        effective_sync = (
+            self.sync_before_run if sync_before_run is None else sync_before_run
+        )
+
+        if has_errors and not dry_run and not self._custom_dirs:
+            ensure_agent_links(self.project_dir)
+
+        if (
+            has_errors
+            and not dry_run
+            and effective_sync
+            and (not self._custom_dirs or self._explicit_hub_dir)
+            and not self.llm_adapter.mock
+            and (self.hub_dir / ".git").exists()
+        ):
+            try:
+                sync_mgr = GitHubSyncManager(hub_dir=self.hub_dir)
+                sync_mgr.pull()
+                sync_mgr.sync_hub_to_project(self.project_dir)
+            except (OSError, RuntimeError) as exc:
+                if self.verbose:
+                    print(f"Warning: Pre-consolidation hub sync failed: {exc}")
+
+        # Stage 1: Wiki Maintainer processes session trajectory
         current_wiki_index = self.wiki_manager.get_wiki_index()
         llm_wiki_response = self.wiki_manager.call_llm_for_wiki_update(
             trajectory, current_wiki_index or ""
         )
 
         patterns_to_create = llm_wiki_response.get("create_patterns", [])
+        patterns_to_update = llm_wiki_response.get("update_patterns", [])
+        active_patterns = patterns_to_create + patterns_to_update
 
-        # Step 2: Skill Proposer proposes skill edits based on updated wiki state
-        updated_wiki_context = (
-            f"Index: {self.wiki_manager.get_wiki_index() or 'N/A'}\n"
-            f"Skill Impact: {self.wiki_manager.get_skill_impact_log() or 'N/A'}"
+        if not dry_run and active_patterns:
+            if not self._custom_dirs:
+                ensure_agent_links(self.project_dir)
+            self.wiki_manager.process_llm_wiki_response(llm_wiki_response)
+
+        # Stage 2: Curator Sub-Agent consolidates patterns and skills inside .agents/
+        curation_res = self.curator.curate_local_session(
+            session_id=trajectory.session_id,
+            extracted_patterns=active_patterns,
+            dry_run=dry_run,
         )
-        proposals = self.skill_proposer.call_llm_for_skill_proposal(
-            updated_wiki_context,
-            patterns=patterns_to_create,
-        )
+        proposals = curation_res.get("proposals", [])
 
         if dry_run:
             return {
@@ -162,8 +223,7 @@ class WikiSkillHarness:
                 "proposals": proposals,
             }
 
-        # If clean session with 0 new patterns and 0 proposals, exit cleanly without writing dummy files
-        if not patterns_to_create and not proposals:
+        if not active_patterns and not proposals:
             return {
                 "status": "clean_session",
                 "session_id": trajectory.session_id,
@@ -171,17 +231,15 @@ class WikiSkillHarness:
                 "model": trajectory.model_routed,
                 "steps_count": len(trajectory.steps),
                 "patterns_created": [],
+                "patterns_updated": [],
                 "proposals": [],
             }
 
-        # Apply Wiki updates
-        self.wiki_manager.process_llm_wiki_response(llm_wiki_response)
+        if not self._custom_dirs:
+            ensure_agent_links(self.project_dir)
 
-        # Step 3: Apply skills with frontmatter metadata
-        for proposal in proposals:
-            self.skill_proposer.apply_skill_proposal(
-                proposal, session_id=trajectory.session_id
-            )
+        if not active_patterns:
+            self.wiki_manager.process_llm_wiki_response(llm_wiki_response)
 
         return {
             "status": "success",
@@ -190,5 +248,6 @@ class WikiSkillHarness:
             "model": trajectory.model_routed,
             "steps_count": len(trajectory.steps),
             "patterns_created": [p["name"] for p in patterns_to_create],
+            "patterns_updated": [p["name"] for p in patterns_to_update],
             "proposals": proposals,
         }
